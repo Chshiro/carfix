@@ -1,6 +1,6 @@
 # CARFIX — CANONICAL PRODUCT SPECIFICATION
 
-**Version:** 2.0 (Canonical Consistency Pass)  
+**Version:** 2.1 (Pre-Implementation P0 Corrections)  
 **Date:** 2026-09-09  
 **Status:** Canonical & Implementation-Ready  
 **Market:** Astana, Kazakhstan (Target Pilot: Esil & Almaty Districts)
@@ -22,19 +22,19 @@ Emergency Breakdown (Car won't start)
         ↓
 Customer Creates Request (2-step: Category + GPS Location)
         ↓
-System Matches Eligible Nearby Providers (PostGIS ST_DWithin)
+System Matches Eligible Nearby Providers (PostGIS ST_DWithin with OR Capability Semantics)
         ↓
 Providers Receive Instant Alerts (Web + Telegram Bot)
         ↓
 Providers Submit Offers (Fixed, Diagnostic Fee, or Range)
         ↓
-Customer Compares Offers & Selects Master
+Customer Compares Offers & Selects Master (11-Step Atomic Transaction)
         ↓
 Order Confirmed (Direct Phone/WhatsApp Unlocked)
         ↓
 Provider Arrives & Performs Service
         ↓
-Completion & 1–5 Star Rating
+Completion & Bidirectional 1–5 Star Ratings
 ```
 
 ---
@@ -43,9 +43,15 @@ Completion & 1–5 Star Rating
 
 1. **`electrical_starting` (Автоэлектрика и запуск):** Computer diagnostics, battery drain, starter, alternator, wiring issues.
 2. **`battery_jumpstart` (Аккумулятор и прикурка):** Jumpstarting dead battery (12V/24V), delivery/installation of new battery, terminal maintenance.
-3. **`mobile_mechanic` (Мелкий выездной ремонт):** Belt replacement, hose fixes, spark plugs, minor mechanical repairs on the road.
+3. **`mobile_mechanic` (Мелкий выездной ремонт):** Minor non-safety-critical repairs (belt replacement, hose fixes, spark plugs, basic fluid top-up).
 
-*(Tire fitting and towing are deferred post-MVP to maximize supply density on electrical/breakdown emergency services).*
+### ⚠️ Strict Scope Restriction for `mobile_mechanic`
+The following categories are **strictly EXCLUDED** from MVP `mobile_mechanic` and require dedicated specialized verification gates if introduced post-MVP:
+- Brakes (pads, discs, lines, master cylinders)
+- Steering (rack, tie rods, power steering pumps)
+- Critical suspension components (ball joints, control arms, springs)
+- Airbags / SRS modules
+- High-pressure fuel systems
 
 ---
 
@@ -60,12 +66,13 @@ Completion & 1–5 Star Rating
 - Customers can save cars in their "Garage" (`make`, `model`, `year`, `license_plate`).
 - **Critical MVP Rule:** Vehicle is **optional** on `ServiceRequest`. In an urgent situation, a customer can submit a request with just category and GPS location.
 
-### 3.3 Provider Capability & Verification
+### 3.3 Provider Capability Model & Matching Semantics
 - Decoupled model: `ProviderProfile` + `ProviderType` (`STO`, `INDEPENDENT_MASTER`, `MOBILE_MASTER`) + `ProviderCapability` (`BATTERY`, `AUTO_ELECTRIC`, `DIAGNOSTICS`, `MECHANICAL_MINOR`) + `ProviderAvailability` (Online toggle with GPS and auto-offline timeout).
+- **Matching Semantics:** `required_capabilities` represents **alternative acceptable capabilities (OR semantics)**. A provider matches if they have *at least one* of the required capabilities.
 - 3 Verification Levels:
   - `LEVEL_1_VERIFIED_SERVICE` (Registered auto service / СТО)
   - `LEVEL_2_VERIFIED_MASTER` (Verified independent technician with verified ID/ИП)
-  - `LEVEL_3_NEW_PROVIDER` (Unverified new provider, restricted categories)
+  - `LEVEL_3_NEW_PROVIDER` (Unverified new provider, restricted from safety-critical jobs)
 
 ---
 
@@ -78,7 +85,7 @@ All monetary values are stored in tiyn (1 KZT = 100 tiyn):
 
 ---
 
-## 5. Canonical Order State Machine
+## 5. Canonical Order State Machine (12 States)
 
 ```
 [DRAFT] ───────► [PUBLISHED] ───────► [OFFERS_RECEIVED] ───────► [PROVIDER_SELECTED]
@@ -100,17 +107,8 @@ All monetary values are stored in tiyn (1 KZT = 100 tiyn):
 
 ---
 
-## 6. Real-Time & Telegram Channel
+## 6. Bidirectional Reviews & Ratings
 
-- **Customer Real-time:** Server-Sent Events (SSE) stream incoming offers in real-time. If connection drops, REST fallback fetches full state.
-- **Provider Telegram Bot:** Providers receive instant lead alerts in Telegram (@CarFixPartnerBot) with 1-tap bidding buttons. Webhook actions are guarded with idempotency.
-
----
-
-## 7. Operations & Administration (MVP Scope)
-
-The admin panel provides:
-- Provider document verification queue.
-- Live inspection of all requests and orders across Astana.
-- Dispute arbitration between customer and provider.
-- User/Provider suspension with immutable audit logs.
+- Both participants can rate each other after order reaches `COMPLETED`: Customer rates Provider, Provider rates Customer.
+- Stored with constraint `UNIQUE(order_id, from_user_id)` and `CHECK(from_user_id <> to_user_id)`.
+- Ratings update provider aggregate score and completed job counts.

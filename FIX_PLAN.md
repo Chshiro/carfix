@@ -1,29 +1,33 @@
 # CARFIX — CANONICAL FIX PLAN
 
-**Version:** 2.0 (Post-Consistency Pass)  
+**Version:** 2.1 (Post-P0 Corrections Pass)  
 **Date:** 2026-09-09  
-**Status:** Pre-Implementation Specification Fixes Completed
+**Status:** All Pre-Implementation Specification Fixes Completed & Verified
 
 ---
 
 ## 1. Resolved Specification Inconsistencies (P0 Fixes)
 
-All architectural ambiguities identified during the audit pass have been resolved across all documentation files:
+All architectural ambiguities and edge-case fixes have been resolved and synchronized across all documentation files:
 
 | Issue ID | Area | Resolution Summary | Status |
 |---|---|---|---|
 | **FIX-01** | Stack Selection | Standardized on **Single Next.js Application** (App Router, Route Handlers, Drizzle ORM, PostGIS). Removed Fastify/Monorepo references. | **RESOLVED** |
-| **FIX-02** | MVP Categories | Fixed strictly to **3 categories**: `electrical_starting`, `battery_jumpstart`, `mobile_mechanic`. Tire service and towing deferred. | **RESOLVED** |
-| **FIX-03** | User Roles | Replaced single-role string with multi-role array `roles: UserRole[]` (e.g. `['motorist', 'provider']`). Admin role protected. | **RESOLVED** |
+| **FIX-02** | MVP Categories | Fixed strictly to **3 categories**: `electrical_starting`, `battery_jumpstart`, `mobile_mechanic`. | **RESOLVED** |
+| **FIX-03** | User Roles | Replaced single-role string with multi-role array `roles: UserRole[]` (e.g. `['motorist', 'provider']`). | **RESOLVED** |
 | **FIX-04** | Vehicle Optionality | Made `vehicleId` nullable on `ServiceRequest`. Emergency requests can be published with just category + location. | **RESOLVED** |
-| **FIX-05** | Provider Model | Decoupled `ProviderProfile`, `ProviderType`, `ProviderCapability`, `ProviderAvailability`, and `ServiceMode`. Matching evaluates required capabilities. | **RESOLVED** |
+| **FIX-05** | Provider Model | Decoupled `ProviderProfile`, `ProviderType`, `ProviderCapability`, `ProviderAvailability`, and `ServiceMode`. | **RESOLVED** |
 | **FIX-06** | State Machine | Standardized on single 12-state finite state machine with mandatory `OrderStatusHistory` audit table. | **RESOLVED** |
-| **FIX-07** | Timers & Workers | Replaced volatile in-memory timers with database-driven fields (`expiresAt`, `nextExpansionAt`, `autoOfflineAt`) and interval worker. | **RESOLVED** |
+| **FIX-07** | Timers & Workers | Replaced in-memory timers with database-driven fields (`expiresAt`, `nextExpansionAt`, `autoOfflineAt`) and interval worker. | **RESOLVED** |
 | **FIX-08** | Money Model | Standardized on integer minor units (tiyn, 1 KZT = 100 tiyn) across 3 pricing modes (`fixed`, `diagnostic_fee`, `estimate_range`). | **RESOLVED** |
 | **FIX-09** | Telegram Integration | Formalized Telegram Bot as official provider notification and quick-action channel (ADR-010). | **RESOLVED** |
 | **FIX-10** | Admin Module | Included minimal operational admin panel directly in MVP scope (verification, live inspector, disputes). | **RESOLVED** |
-| **FIX-11** | Concurrency & IDOR | Added `SELECT FOR UPDATE` locking on offer selection, `UNIQUE(request_id, provider_id)`, and resource ownership matrix. | **RESOLVED** |
-| **FIX-12** | Business Validation Gate | Corrected premature claims of validation; added explicit Phase 0.5 supply validation gate in development plan. | **RESOLVED** |
+| **FIX-11** | Concurrency & IDOR | Added 11-step atomic offer selection with `SELECT FOR UPDATE` and resource ownership matrix. | **RESOLVED** |
+| **FIX-12** | Business Validation Gate | Added explicit Phase 0.5 supply validation gate in development plan. | **RESOLVED** |
+| **FIX-13 (P0-1)** | Reviews Model | Replaced `UNIQUE(order_id)` with `UNIQUE(order_id, from_user_id)` to allow bidirectional reviews with distinct user checks. | **RESOLVED** |
+| **FIX-14 (P0-2)** | Capability Semantics | Defined explicit OR / alternative matching semantics for `required_capabilities` (`pc.capability = ANY(sr.required_capabilities)`). | **RESOLVED** |
+| **FIX-15 (P0-3)** | Safety Exclusions | Strictly restricted `mobile_mechanic` to non-safety-critical roadside repairs (brakes, steering, suspension, airbags excluded). | **RESOLVED** |
+| **FIX-16 (P0-4)** | Atomic Selection Flow | Documented the formal 11-step atomic transaction boundary for offer selection in architecture and decisions. | **RESOLVED** |
 
 ---
 
