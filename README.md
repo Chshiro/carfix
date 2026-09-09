@@ -1,156 +1,53 @@
-# CarFix
-
-**Real-time automotive services marketplace for Astana, Kazakhstan.**
-
-CarFix connects motorists who have urgent vehicle problems with nearby, available, verified service providers. One request reaches multiple providers who compete with transparent offers — price, ETA, and ratings.
-
-> "inDrive for car problems" — the fastest way to get your car fixed in Astana.
+# CarFix — On-Demand Automotive Assistance Marketplace
+**Target Market:** Astana, Kazakhstan (Pilot: Esil & Almaty Districts)  
+**Status:** `Pre-MVP — Product & Architecture Defined` | `Supply Validation In Progress`
 
 ---
 
-## Status
+## Overview
 
-**Phase 0 — Business & Product Validation** ✅ Complete
+CarFix is an on-demand automotive assistance marketplace connecting stranded car owners with verified nearby auto specialists (auto electricians, mobile mechanics, battery specialists) in real-time.
 
-- [x] Business audit ([AUDIT.md](./AUDIT.md))
-- [x] Product specification ([PRODUCT.md](./PRODUCT.md))
-- [x] Technical architecture ([ARCHITECTURE.md](./ARCHITECTURE.md))
-- [x] Development plan ([DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md))
-- [x] Architectural decisions ([DECISIONS.md](./DECISIONS.md))
-- [ ] Phase 1 — Technical Foundation (Next)
+Instead of calling dozens of repair shops in directories (2GIS/OLX) or posting in unstructured WhatsApp groups, a motorist submits a request in 2 steps and receives transparent price bids from qualified specialists nearby.
 
 ---
 
-## What This Is
+## Canonical Tech Stack
 
-A mobile-first web application (PWA) where:
-
-1. **Motorist** creates a structured request (category, vehicle, location, photos)
-2. **Nearby available providers** get notified in real-time
-3. **Providers respond** with price, ETA, and a short message
-4. **Motorist compares** offers and selects a provider
-5. **Service is completed** and both parties rate each other
-
-### MVP Focus
-- **City:** Astana, Kazakhstan
-- **Categories:** Electrical/starting problems, battery/jump-start, mobile mechanic
-- **Supply:** Mobile auto electricians, mobile mechanics
-- **Language:** Russian
+- **Application Architecture:** Single Next.js Application (App Router, API Route Handlers, Modular Domain Services, Mobile-First PWA)
+- **Language:** TypeScript (`strict` mode)
+- **Database:** PostgreSQL 16 with **PostGIS** extension (`geography(Point, 4326)`)
+- **Data Access:** Drizzle ORM (`drizzle-orm`, `drizzle-kit`)
+- **Real-Time Client Updates:** Server-Sent Events (SSE) with REST state synchronization
+- **Provider Dispatch & Bidding:** Telegram Bot API (@CarFixPartnerBot) with 1-tap inline keyboards
+- **Storage:** S3-compatible object storage (Cloudflare R2 / AWS S3) with pre-signed upload URLs
 
 ---
 
-## Architecture Summary
+## Canonical MVP Categories (Strictly 3)
 
-```
-Next.js 14 (React + TypeScript)
-        │
-   API Routes (REST)
-        │
-   PostgreSQL 16 + PostGIS
-        │
-   SSE (real-time updates)
-```
+1. `electrical_starting` — Автоэлектрика и компьютерная диагностика
+2. `battery_jumpstart` — Прикурка аккумулятора (12V/24V) и замена АКБ на месте
+3. `mobile_mechanic` — Мелкий выездной ремонт на дороге
 
-- **Modular monolith** — single deployable with clean domain boundaries
-- **Full-stack TypeScript** — shared types between client and server
-- **PostGIS** for geospatial matching (find providers within radius)
-- **SSE** for real-time updates (new offers, status changes)
-- **PWA** for mobile experience without app store friction
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for full details.
+*(Шиномонтаж, эвакуаторы и сложный стационарный ремонт запланированы на Post-MVP фазу).*
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js 20+
-- Docker & Docker Compose (for PostgreSQL)
-- npm
-
-### Setup
-
-```bash
-# Clone the repository
-git clone <repo-url>
-cd carfix
-
-# Install dependencies
-npm install
-
-# Start PostgreSQL (Docker)
-docker-compose up -d
-
-# Run database migrations
-npm run db:migrate
-
-# Start development server
-npm run dev
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```
-DATABASE_URL=postgresql://carfix:carfix@localhost:5432/carfix
-JWT_SECRET=your-secret-key
-SMS_PROVIDER_API_KEY=mock  # Use 'mock' for development
-S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadmin
-S3_BUCKET=carfix-uploads
-```
-
----
-
-## Project Structure
-
-```
-carfix/
-├── src/
-│   ├── app/          # Next.js pages and API routes
-│   ├── domain/       # Business logic (framework-agnostic)
-│   ├── db/           # Database schema and migrations (Drizzle)
-│   ├── lib/          # Shared utilities (SMS, storage, maps)
-│   ├── components/   # React components
-│   └── types/        # Shared TypeScript types
-├── public/           # Static assets, PWA manifest
-├── docker-compose.yml
-└── README.md
-```
-
----
-
-## Key Documents
+## Repository Documentation Index
 
 | Document | Purpose |
-|----------|---------|
-| [AUDIT.md](./AUDIT.md) | Full business, marketplace, and technical audit |
-| [PRODUCT.md](./PRODUCT.md) | Product specification, user journeys, state machine, metrics |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Technical architecture, data model, geolocation, real-time, security |
-| [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md) | 8-phase development plan with tests and exit criteria |
-| [DECISIONS.md](./DECISIONS.md) | Architectural Decision Records (ADRs) |
+|---|---|
+| [DEVELOPMENT_PLAN.md](file:///c:/carfix/DEVELOPMENT_PLAN.md) | Canonical 8-week vertical-slice implementation plan and 22-scenario test matrix |
+| [ARCHITECTURE.md](file:///c:/carfix/ARCHITECTURE.md) | Complete system architecture, domain models, 12-state order machine, Anti-IDOR matrix, and error contracts |
+| [MVP_SCOPE.md](file:///c:/carfix/MVP_SCOPE.md) | Frozen MVP scope boundaries, in-scope/out-of-scope feature list, and launch kill-thresholds |
+| [PRODUCT.md](file:///c:/carfix/PRODUCT.md) | Product context, problem statement, user journeys, and tiyn money representation |
+| [DECISIONS.md](file:///c:/carfix/DECISIONS.md) | Architectural Decision Records (ADR-001 through ADR-015) |
+| [FIX_PLAN.md](file:///c:/carfix/FIX_PLAN.md) | Log of resolved P0 specification inconsistencies and P1/P2 backlog |
+| [IMPLEMENTATION_READINESS.md](file:///c:/carfix/IMPLEMENTATION_READINESS.md) | Final pre-implementation audit and readiness verdict |
 
 ---
 
-## Development Plan
+## Current Status & Next Steps
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 0 | Business & Product Validation | ✅ Complete |
-| 1 | Technical Foundation (auth, DB, project setup) | ⬜ Not Started |
-| 2 | Provider Onboarding (profile, availability, location) | ⬜ Not Started |
-| 3 | Customer Request Creation (vehicles, requests, images) | ⬜ Not Started |
-| 4 | Marketplace Matching & Notifications | ⬜ Not Started |
-| 5 | Provider Offers (pricing, comparison, selection) | ⬜ Not Started |
-| 6 | Order Lifecycle (state machine, completion) | ⬜ Not Started |
-| 7 | Trust Layer (ratings, history, verification) | ⬜ Not Started |
-| 8 | AI-Assisted Request Structuring (post-validation) | ⬜ Not Started |
-
----
-
-## License
-
-Proprietary. All rights reserved.
+All product specifications and architectural decisions are consolidated and frozen. Development begins with **Slice 1: Domain + Transaction Core** (Database schema, PostGIS spatial queries, and automated integration tests).

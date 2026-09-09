@@ -1,300 +1,213 @@
-# CARFIX — ARCHITECTURAL DECISIONS
+# CARFIX — ARCHITECTURAL DECISION RECORDS (ADR)
 
-**Status:** Living document. Updated as decisions are made.
+**Version:** 2.0 (Canonical Consistency Pass)  
+**Date:** 2026-09-09  
+**Status:** Approved & Frozen for Implementation
 
 ---
 
-## ADR-001: Single Next.js Application (No Monorepo)
+## ADR Index
 
-**Date:** 2026-09-09  
-**Status:** Accepted
+| ADR # | Title | Status | Date |
+|---|---|---|---|
+| **ADR-001** | Single Next.js Application (Modular Monolith) | Accepted | 2026-09-09 |
+| **ADR-002** | PostgreSQL 16 + PostGIS for Spatial Matching | Accepted | 2026-09-09 |
+| **ADR-003** | Drizzle ORM for Database Access & Migrations | Accepted | 2026-09-09 |
+| **ADR-004** | Phone OTP + JWT Authentication | Accepted | 2026-09-09 |
+| **ADR-005** | Three Canonical MVP Launch Categories | Accepted | 2026-09-09 |
+| **ADR-006** | Three Pricing Modes in Integer Tiyn Minor Units | Accepted | 2026-09-09 |
+| **ADR-007** | 12-State Canonical Order State Machine & Audit | Accepted | 2026-09-09 |
+| **ADR-008** | Server-Sent Events (SSE) with REST Reconnect | Accepted | 2026-09-09 |
+| **ADR-009** | Direct Payment (Kaspi QR/Cash) for MVP | Accepted | 2026-09-09 |
+| **ADR-010** | Telegram Provider Notifications & Action Channel | Accepted | 2026-09-09 |
+| **ADR-011** | Multi-Role User Model (`roles: varchar[]`) | Accepted | 2026-09-09 |
+| **ADR-012** | Provider Capability-Based Matching Model | Accepted | 2026-09-09 |
+| **ADR-013** | Database-Driven Timers & Background Execution | Accepted | 2026-09-09 |
+| **ADR-014** | Canonical Authorization & Anti-IDOR Ownership | Accepted | 2026-09-09 |
+| **ADR-015** | Idempotency & Concurrency Locking Strategy | Accepted | 2026-09-09 |
+
+---
+
+## ADR-001: Single Next.js Application (Modular Monolith)
 
 ### Context
-The original concept suggested web, desktop, and mobile platforms, which would imply a monorepo with shared packages. After audit, the MVP is a single responsive web application.
-
-### Alternatives Considered
-1. **Monorepo (Turborepo/Nx)** with `apps/web`, `apps/api`, `packages/shared-types`
-2. **Separate repositories** for frontend and backend
-3. **Single Next.js project** with API routes
+We evaluated whether to build a monorepo with multiple apps (Fastify API + Next.js Web) or a single unified Next.js application.
 
 ### Decision
-Single Next.js project. API routes serve as the backend. No monorepo tooling.
+Adopt a **single Next.js application** (App Router, API Route Handlers, Domain Layer, PWA).
 
 ### Rationale
-- Only one deployable artifact exists (the web app)
-- Next.js API routes eliminate the need for a separate backend server for MVP
-- Shared types are achieved via importing from `src/types/` — no package boundary needed
-- Monorepo tooling (Turborepo, Nx) adds configuration overhead for zero benefit with one app
-- If a separate backend becomes necessary later, the domain logic in `src/domain/` is framework-agnostic and can be extracted
+A solo developer building an MVP suffers high cognitive load from multi-app monorepos (redundant boilerplate, build tooling overhead, port management). Next.js API Route Handlers with a clean server-side domain service layer provide complete type-safety, zero build overhead, and seamless full-stack deployment.
 
 ### Consequences
-- (+) Simpler project setup and maintenance
-- (+) Faster development velocity
-- (+) Single deployment
-- (-) API routes have limitations (no WebSocket support natively, cold starts on serverless)
-- (-) If we later need a separate backend, migration requires work
-
-### Reversal Conditions
-Split into monorepo if: (a) native mobile app is built, OR (b) API route limitations become blocking, OR (c) a second developer joins and needs backend isolation.
+- Backend and frontend reside in one codebase (`src/app/api`, `src/server`, `src/app`).
+- Reversal Condition: If API traffic demands independent scaling or separate team ownership, extract `src/server` into Fastify.
 
 ---
 
-## ADR-002: SSE Over WebSockets for Real-Time
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-002: PostgreSQL 16 + PostGIS for Spatial Matching
 
 ### Context
-The marketplace requires real-time updates: new offers appearing for customers, new requests appearing for providers. The two main options are WebSockets and Server-Sent Events (SSE).
-
-### Alternatives Considered
-1. **WebSockets (via Socket.io or ws)** — full-duplex communication
-2. **Server-Sent Events (SSE)** — server-to-client only
-3. **Long polling** — simple but high overhead
-4. **Third-party service (Pusher, Ably)** — managed but adds dependency and cost
+Geospatial matching of drivers and technicians is the core technical capability.
 
 ### Decision
-Server-Sent Events (SSE) with polling fallback.
+Use PostgreSQL 16 with the **PostGIS** extension (`geography(Point, 4326)`).
 
 ### Rationale
-- Our real-time needs are **unidirectional** (server → client): "here's a new offer" / "here's a new request"
-- Client → server communication uses normal HTTP POST (submit offer, accept offer, etc.)
-- SSE has built-in reconnection (EventSource API)
-- SSE works through HTTP proxies and CDNs without special configuration
-- WebSockets require connection management, heartbeats, and special proxy config
-- SSE is simpler to implement in Next.js API routes
-- Single-server deployment means no pub/sub complexity
-
-### Consequences
-- (+) Much simpler implementation
-- (+) Works through proxies and load balancers without configuration
-- (+) Built-in reconnection in browser
-- (-) One-directional only (not a problem for our use case)
-- (-) Not supported in very old browsers (irrelevant — our target audience uses modern phones)
-- (-) If we scale to multiple app servers, need a pub/sub mechanism (Redis) to fan out events
-
-### Reversal Conditions
-Switch to WebSockets if: (a) bidirectional real-time communication is needed (e.g., live chat), OR (b) SSE connection limits become a bottleneck.
+PostGIS provides native spherical distance calculations (`ST_DWithin`, `ST_Distance`) with high-performance spatial GIST indexing. This eliminates custom trigonometry and scales effortlessly for city-wide matching in Astana.
 
 ---
 
-## ADR-003: PostgreSQL + PostGIS for Geospatial
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-003: Drizzle ORM for Database Access & Migrations
 
 ### Context
-The marketplace needs to find providers within a radius of a customer's location. This requires geospatial queries with acceptable performance.
-
-### Alternatives Considered
-1. **PostgreSQL + PostGIS** — native geospatial extension
-2. **PostgreSQL with raw lat/lng + Haversine in SQL** — no extension needed
-3. **Separate geospatial service (Elasticsearch, Redis with geospatial)** — dedicated geo engine
-4. **Application-level distance calculation** — fetch all providers, filter in code
+We need a type-safe TypeScript ORM that natively supports PostGIS spatial queries and SQL transactions.
 
 ### Decision
-PostgreSQL + PostGIS.
+Use **Drizzle ORM** (`drizzle-orm`, `drizzle-kit`).
 
 ### Rationale
-- PostGIS `ST_DWithin` uses spatial indexes (GIST) for O(log n) radius queries
-- Haversine in SQL works but requires full table scan (no index)
-- At 100-500 providers, Haversine is fine. At 5000+ providers, PostGIS is necessary. Starting with PostGIS avoids a migration.
-- PostGIS is a single `CREATE EXTENSION` — zero infrastructure addition
-- Eliminates need for a separate geospatial service
-
-### Consequences
-- (+) Fast geospatial queries at any scale
-- (+) No separate service to maintain
-- (+) Industry standard, well-documented
-- (-) PostGIS adds ~5MB to Docker image
-- (-) Slightly more complex schema (geography columns)
+Drizzle generates lightweight SQL queries without heavy runtime overhead, offers full TypeScript inference from schema definitions, and allows raw SQL escape hatches for complex PostGIS spatial queries.
 
 ---
 
-## ADR-004: Drizzle ORM Over Prisma
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-004: Phone OTP + JWT Authentication
 
 ### Context
-Need a type-safe database access layer for TypeScript + PostgreSQL.
-
-### Alternatives Considered
-1. **Prisma** — most popular TypeScript ORM
-2. **Drizzle** — SQL-like TypeScript ORM
-3. **Raw SQL (pg driver)** — maximum control
-4. **Kysely** — SQL query builder
+Automotive emergency users in Kazakhstan expect phone-number-based login without passwords.
 
 ### Decision
-Drizzle ORM.
-
-### Rationale
-- SQL-like API — what you write is close to what executes. No "query engine" magic.
-- Better PostGIS support than Prisma (can use raw SQL fragments)
-- Lighter weight than Prisma (no binary engine)
-- Schema-as-code with type inference — types are derived from schema, not generated
-- Migration system is simple and predictable
-- Better performance than Prisma for complex queries
-
-### Consequences
-- (+) SQL knowledge translates directly
-- (+) No heavy binary dependencies
-- (+) Better raw SQL escape hatch for PostGIS queries
-- (-) Smaller community than Prisma
-- (-) Less automatic tooling (no Prisma Studio equivalent)
-- (-) Less documentation for edge cases
+Implement phone number + 6-digit SMS OTP authentication (mock provider in dev, SMS.kz in production) issuing short-lived access JWTs (15 min) and long-lived refresh JWTs (30 days) stored in `httpOnly` secure cookies.
 
 ---
 
-## ADR-005: 2GIS Maps API (Primary) with OpenStreetMap Fallback
-
-**Date:** 2026-09-09  
-**Status:** Proposed (pending API key evaluation)
+## ADR-005: Three Canonical MVP Launch Categories
 
 ### Context
-The application needs map display and reverse geocoding for Kazakhstan (specifically Astana).
-
-### Alternatives Considered
-1. **Google Maps** — global standard
-2. **Yandex Maps** — popular in CIS region
-3. **2GIS Maps API** — local provider, excellent Kazakhstan coverage
-4. **OpenStreetMap (Leaflet)** — open-source, free
+Attempting to cover all automotive services (bodywork, tire fitting, towing, engine overhaul) dilutes supply liquidity in Astana.
 
 ### Decision
-Evaluate 2GIS Maps API first. Use Leaflet/OpenStreetMap as fallback if 2GIS API is not cost-effective or has insufficient API capabilities.
+Strictly limit MVP to **3 emergency categories**:
+1. `electrical_starting`
+2. `battery_jumpstart`
+3. `mobile_mechanic`
 
 ### Rationale
-- 2GIS has the best address database for Kazakhstan cities
-- Free tier may be sufficient for MVP
-- Users in Kazakhstan are familiar with 2GIS
-- Google Maps is expensive and has billing complexity
-- Yandex Maps has geopolitical uncertainty
-- OpenStreetMap is free but may have less detailed Kazakhstan coverage
-
-### Consequences
-- (+) Best local address data
-- (+) Users recognize the map style
-- (-) Vendor lock-in to a smaller provider
-- (-) API may be less mature than Google/Yandex
+These categories target acute, high-urgency pain points where mobile technicians have immediate availability and high willingness to travel.
 
 ---
 
-## ADR-006: PWA Instead of Native Mobile Apps
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-006: Three Pricing Modes in Integer Tiyn Minor Units
 
 ### Context
-Both motorists and providers will primarily use the product on mobile phones. The question is whether to build native apps or use a Progressive Web App.
-
-### Alternatives Considered
-1. **Native iOS + Android (React Native or Flutter)** — native experience
-2. **Progressive Web App (PWA)** — web-based, installable
-3. **Hybrid (Capacitor/Ionic)** — web code in native shell
+Automotive repair costs cannot always be determined before physical inspection. Floating-point numbers create rounding errors.
 
 ### Decision
-PWA first. Native apps only if PWA limitations become measurable business problems.
-
-### Rationale
-- Single codebase (the Next.js web app IS the mobile experience)
-- No App Store review process — instant updates
-- No installation friction — works via URL
-- PWA supports push notifications, offline shell, install prompt
-- 2-3x faster development than native for a solo developer
-- Marketplace hypothesis must be validated before investing in native
-- Kazakhstan has good mobile browser support (Chrome dominates)
-
-### Known Limitations
-- iOS Safari has limited PWA push notification support (improved in iOS 16.4+)
-- No access to some native APIs (NFC, Bluetooth — not needed)
-- Less smooth animations than native (acceptable for MVP)
-
-### Reversal Conditions
-Build native if: (a) PWA push notifications prove unreliable in production AND (b) the marketplace is validated AND (c) budget/team allows native development.
+Store all prices as integer minor units (tiyn: 1 KZT = 100 tiyn). Support 3 distinct pricing modes:
+1. `fixed` (`amount_tiyn`)
+2. `diagnostic_fee` (`amount_tiyn`)
+3. `estimate_range` (`min_amount_tiyn`, `max_amount_tiyn`)
 
 ---
 
-## ADR-007: Free Marketplace Model for MVP (No Monetization)
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-007: 12-State Canonical Order State Machine & Audit
 
 ### Context
-The business model analysis identified multiple revenue options. The question is when to start charging.
+Marketplace transactions require unambiguous status lifecycle tracking.
 
 ### Decision
-MVP is completely free for both motorists and providers. No commission, no subscription, no paid leads.
-
-### Rationale
-- The existential risk is marketplace liquidity, not revenue
-- Charging providers creates supply acquisition friction during the hardest phase
-- Every barrier to provider signup reduces the chance of achieving marketplace density
-- Charging customers would destroy demand when alternatives (2GIS, WhatsApp) are free
-- Unit economics can be measured without actual revenue collection (track GMV via recorded offer prices)
-
-### Planned Monetization Path
-1. **Month 6-12:** Paid leads (provider pays small fee to respond to a request)
-2. **Month 12+:** Transaction commission (requires in-app payments)
-
-### Consequences
-- (+) Maximum supply/demand acquisition speed
-- (+) Simple architecture (no payment infrastructure)
-- (-) No revenue during validation period
-- (-) Must have sufficient funding to operate for 6-12 months without revenue
+Implement a single 12-state state machine:
+`DRAFT` → `PUBLISHED` → `OFFERS_RECEIVED` → `PROVIDER_SELECTED` → `EN_ROUTE` → `ARRIVED` → `IN_PROGRESS` → `PENDING_COMPLETION` → `COMPLETED` / `CANCELLED` / `EXPIRED` / `DISPUTED`.
+Every transition records an immutable row in `order_status_history`.
 
 ---
 
-## ADR-008: Russian-Only MVP (No Multi-Language)
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-008: Server-Sent Events (SSE) with REST Reconnect
 
 ### Context
-Kazakhstan is officially bilingual (Kazakh + Russian). English is used in business contexts. The question is which languages to support at launch.
+The customer needs live updates when provider offers arrive.
 
 ### Decision
-Russian only for MVP. All strings externalized for future localization.
-
-### Rationale
-- Russian is the dominant digital services language in Astana
-- All major marketplace apps in Kazakhstan (inDrive, Kaspi, 2GIS) default to Russian
-- Adding Kazakh or English multiplies content/QA work
-- Externalized strings make future localization a content task, not an engineering task
-
-### Consequences
-- (+) Faster development
-- (+) Simpler QA
-- (-) May alienate Kazakh-only speakers (small percentage in Astana)
-- (-) Not suitable for international investor demos without English
+Use **Server-Sent Events (SSE)**. On connection loss, the client automatically reconnects and triggers a standard REST `GET` request to synchronize the latest state.
 
 ---
 
-## ADR-009: No In-App Payments for MVP
-
-**Date:** 2026-09-09  
-**Status:** Accepted
+## ADR-009: Direct Payment (Kaspi QR/Cash) for MVP
 
 ### Context
-Payment after service completion could happen via the platform or off-platform.
+Integrating in-app escrow payments adds regulatory, banking, and refund complexity before proving transaction demand.
 
 ### Decision
-No in-app payments. Customers pay providers directly (cash, Kaspi transfer, bank card on-site).
+Customers pay providers directly (Kaspi QR or cash). The platform does not hold customer funds in MVP.
 
-### Rationale
-- Payment infrastructure (Kaspi Pay, Stripe equivalent for KZ) adds massive complexity
-- Payment disputes, refunds, and escrow require legal framework
-- Kaspi transfer is ubiquitous in Kazakhstan — users already know how to pay
-- The marketplace hypothesis can be validated without controlling the payment
-- Offer prices are recorded in the system for analytics and trust (even without payment flow)
+---
 
-### Consequences
-- (+) Much simpler architecture
-- (+) No payment processing fees
-- (+) No financial regulatory requirements
-- (-) Cannot enforce exact pricing
-- (-) Cannot take commission automatically
-- (-) Less data on actual transaction values (rely on self-reported completion)
-- (-) Off-platform payment makes disintermediation easier
+## ADR-010: Telegram Provider Notifications & Action Channel
 
-### Reversal Conditions
-Add payments when: (a) marketplace is validated, (b) commission model is activated, (c) Kaspi Pay or equivalent integration is justified by revenue.
+### Context
+Technicians in Astana do not keep web browser tabs active while driving or working in workshops.
+
+### Decision
+Integrate a dedicated Telegram Bot (@CarFixPartnerBot) as the primary lead notification and quick-action channel for providers.
+- Accounts are linked via secure one-time pairing codes.
+- Providers receive instant alerts with inline bidding buttons.
+- Core database remains the single source of truth; webhook callbacks are executed with idempotency.
+
+---
+
+## ADR-011: Multi-Role User Model (`roles: varchar[]`)
+
+### Context
+A user may be a car owner and also a mechanic, or an administrator.
+
+### Decision
+Model roles as an array `roles: UserRole[]` (e.g. `['motorist']`, `['motorist', 'provider']`, `['admin']`). The admin role can only be assigned through trusted operational seed or existing admin grants.
+
+---
+
+## ADR-012: Provider Capability-Based Matching Model
+
+### Context
+Matching requests solely by provider type creates rigid silos.
+
+### Decision
+Decouple `ProviderProfile` from `ProviderCapabilities` (`BATTERY`, `AUTO_ELECTRIC`, `DIAGNOSTICS`, `MECHANICAL_MINOR`) and `ServiceMode` (`MOBILE`, `AT_LOCATION`). Matching evaluates `ServiceRequest.required_capabilities` against `ProviderCapabilities`.
+
+---
+
+## ADR-013: Database-Driven Timers & Background Execution
+
+### Context
+Node.js `setTimeout` in memory is lost on server restart.
+
+### Decision
+Persist timer metadata directly in PostgreSQL:
+- `service_requests.expires_at`
+- `service_requests.next_expansion_at`
+- `provider_availability.auto_offline_at`
+A lightweight in-process interval worker (every 30s) executes pending transitions without requiring Redis or external queue infrastructure in MVP.
+
+---
+
+## ADR-014: Canonical Authorization & Anti-IDOR Ownership
+
+### Context
+Predictable UUIDs or direct ID parameters must not allow unauthorized access to another user's requests or orders.
+
+### Decision
+Enforce strict resource ownership checks in domain services for every endpoint:
+- Customers can only read/mutate requests and orders where `customer_id = user.id`.
+- Providers can only access requests matched to their capabilities and orders where `provider_id = provider.id`.
+- Contact details (phone, exact coordinates) are masked until provider selection is confirmed.
+
+---
+
+## ADR-015: Idempotency & Concurrency Locking Strategy
+
+### Context
+Simultaneous offer acceptance or duplicate button taps can create race conditions and duplicate orders.
+
+### Decision
+1. **Offer Uniqueness:** `UNIQUE(request_id, provider_id)` database constraint.
+2. **Atomic Offer Acceptance:** `SELECT FOR UPDATE` transaction on the `service_requests` row. Exactly one offer selection succeeds; concurrent requests receive a `409 Conflict`.
+3. **Telegram Callbacks:** Track processed `callback_query_id` to prevent duplicate action processing.

@@ -1,154 +1,232 @@
-# CARFIX — DEVELOPMENT PLAN (OPTIMIZED VERTICAL-SLICE)
+# CARFIX — CANONICAL DEVELOPMENT PLAN
 
-**Version:** 2.0  
+**Version:** 3.0 (Canonical Consistency Pass)  
 **Date:** 2026-09-09  
-**Strategy:** Feature-Driven Vertical Slices (End-to-End Core Loop first)  
-**Target Duration:** 8 Weeks (Launch-Ready MVP in Astana, Kazakhstan)
+**Target Market:** Astana, Kazakhstan  
+**Architecture:** Single Next.js Project (App Router, TypeScript Strict, API Route Handlers, Domain Layer, Drizzle ORM, PostgreSQL 16 + PostGIS, SSE, PWA)  
+**Target Duration:** 8 Weeks (Launch-Ready MVP)
 
 ---
 
-## Executive Overview
+## 1. Architectural & Product Ground Rules
 
-This plan breaks the MVP into **5 Vertical Slices (8 Weeks)**. Unlike traditional horizontal slicing (where the database is built first, then all APIs, then all UI months later), each vertical slice delivers a functional, end-to-end testable capability.
-
-**The Golden Rule:** The Core Transaction Loop (`Request -> PostGIS Matching -> Offer -> Selection -> Order -> Rating`) is completed, tested, and verified at the database and API level by **Week 2**, ensuring zero architectural surprises later.
+1. **Architecture Style:** **Single Next.js Application** (Modular Domain Monolith). No Monorepo scaffolding, no Fastify/NestJS duplication, no Microservices, no Redis/BullMQ, no Kafka, no GraphQL, no Socket.IO.
+2. **Canonical MVP Categories (Strictly 3):**
+   - `electrical_starting` — Auto-electric diagnostics & starting issues
+   - `battery_jumpstart` — Battery jumpstart / replacement
+   - `mobile_mechanic` — Minor roadside mechanical repairs
+   *(Tire service, towing, bodywork, and complex repairs are explicitly DEFERRED post-MVP).*
+3. **Provider Capability Model:** Decoupled `ProviderProfile`, `ProviderType` (`STO`, `INDEPENDENT_MASTER`, `MOBILE_MASTER`), `ProviderCapability` (`BATTERY`, `AUTO_ELECTRIC`, `DIAGNOSTICS`, `MECHANICAL_MINOR`), `ProviderAvailability`, `VerificationLevel`, and `ServiceMode` (`MOBILE`, `AT_LOCATION`).
+4. **Multi-Role User Model:** User accounts hold `roles: UserRole[]` (e.g., `["motorist"]`, `["motorist", "provider"]`, `["admin"]`). Admin role cannot be self-assigned.
+5. **Vehicle Optionality:** `ServiceRequest.vehicleId` is **OPTIONAL / nullable**. Emergency assistance can be requested with just Category + Location.
+6. **Location Source of Truth:** Single PostGIS column `location geography(Point, 4326)` with GIST indexing and coordinate bounds validation. No duplicate lat/lng columns.
+7. **Database-Driven Timers:** Request expiration (`expiresAt`), radius expansion (`nextExpansionAt`), and provider auto-offline (`autoOfflineAt`) are persisted in PostgreSQL. A server periodic worker executes transitions without losing timers on restart.
+8. **Canonical State Machine:** Single 12-state model (`DRAFT` → `PUBLISHED` → `OFFERS_RECEIVED` → `PROVIDER_SELECTED` → `EN_ROUTE` → `ARRIVED` → `IN_PROGRESS` → `PENDING_COMPLETION` → `COMPLETED` / `CANCELLED` / `EXPIRED` / `DISPUTED`) with `OrderStatusHistory` audit table.
+9. **Idempotency & Concurrency:** `UNIQUE(request_id, provider_id)` for offers, `SELECT FOR UPDATE` transaction for offer selection, idempotent status transitions and Telegram callbacks.
+10. **Telegram Provider Channel:** Official notification and quick-action channel for providers linked via secure token (ADR-010). Core API remains single source of truth.
+11. **Admin in MVP:** Minimal operational admin panel for provider document verification, request/order inspection, dispute resolution, user suspension, and audit logs.
 
 ---
 
-## Roadmap Overview
+## 2. Canonical Development Sequence
 
 ```
-[WEEK 1-2] SLICE 1: TRANSACTION ENGINE (API + PostGIS + Drizzle + E2E Tests)
-[WEEK 3-4] SLICE 2: CUSTOMER JOURNEY (PWA Mobile-First Web App)
-[WEEK 5-6] SLICE 3: PROVIDER JOURNEY & TELEGRAM BOT INTEGRATION
-[WEEK 7]   SLICE 4: TRUST, SAFETY & ADMIN MODERATION PANEL
-[WEEK 8]   SLICE 5: E2E FIELD TESTING, POLISH & ASTANA PILOT ONBOARDING
+[PHASE 0.5] SUPPLY VALIDATION GATE (Continuous Operational Gate)
+    ├── Recruit 10–20 providers in Astana (Esil/Almaty districts)
+    ├── >= 5 active providers committed to pilot
+    └── Manual concierge test requests (verify response time < 5 min)
+
+[SLICE 1] DOMAIN + TRANSACTION CORE (API + PostGIS + Drizzle + E2E Tests) — Weeks 1–2
+    ├── Project skeleton (Next.js App Router, TypeScript strict, Drizzle, PostGIS)
+    ├── Database schema with constraints, indexes, and geography Point
+    ├── Auth (Phone OTP + JWT access/refresh) & Multi-Role authorization
+    ├── Provider capability & availability engine
+    ├── Request creation (optional vehicle) & Deterministic PostGIS matching
+    ├── Offer engine (3 pricing modes in tiyn) & Atomic selection (SELECT FOR UPDATE)
+    ├── Order state machine (12 states) & OrderStatusHistory audit
+    ├── Database-driven timers (expiration, expansion, auto-offline)
+    ├── Standard error contract & IDOR authorization rules
+    └── Automated E2E integration test suite (22 test scenarios)
+
+[SLICE 2] CUSTOMER PWA EXPERIENCE — Weeks 3–4
+    ├── Mobile-first PWA shell (manifest, responsive layout)
+    ├── Phone OTP login/registration UI
+    ├── 2-step Request creation (Category + Location + Optional Vehicle/Photos)
+    ├── Real-time Offer comparison feed (SSE + REST reload on reconnect)
+    ├── Provider profile modal with verification badge and reviews
+    ├── Active Order tracker with Call/WhatsApp direct actions
+    └── Order completion, final price confirmation & 1–5 star rating UI
+
+[SLICE 3] PROVIDER EXPERIENCE & TELEGRAM INTEGRATION — Weeks 5–6
+    ├── Provider registration, capability selection & document upload
+    ├── One-tap Online/Offline toggle with GPS capture
+    ├── Telegram Bot integration (account binding, instant alert webhooks)
+    ├── Quick-bidding from Telegram or Web (Fixed, Diagnostic Fee, Range)
+    ├── Provider order execution screen (En Route → Arrived → In Progress → Complete)
+    └── Earnings summary & completed job history
+
+[SLICE 4] OPERATIONS, TRUST & ADMIN PANEL — Week 7
+    ├── Secure Admin authentication & Role Guard
+    ├── Provider verification queue (Inspect documents, assign Levels 1/2/3)
+    ├── Safety-critical category enforcement gate
+    ├── Live request & order inspection across Astana
+    ├── Dispute & complaint resolution workflow
+    └── Admin audit trail & basic marketplace health metrics
+
+[SLICE 5] FIELD PILOT & PRODUCTION HARDENING — Week 8
+    ├── Production deployment (Docker, PostgreSQL 16 + PostGIS, HTTPS/SSL)
+    ├── Network resilience, PWA offline handling & rate limiting
+    ├── Onboard first 15–20 real providers into Telegram Bot
+    └── Execute closed pilot in pilot district (Esil/Almaty) with real transactions
 ```
 
 ---
 
-## Slice 1 (Weeks 1–2) — Transaction Engine & Backend Core
+## 3. Detailed Slice Specifications
 
-**Goal:** Fully functioning, type-safe API and PostgreSQL/PostGIS database with complete transaction lifecycle and automated E2E tests.
-
-### Deliverables
-
-| Task | Description |
-|------|-------------|
-| **Monorepo Setup** | Node.js + TypeScript (strict), Fastify/Next.js, Drizzle ORM, Zod, ESLint |
-| **Docker Compose** | PostgreSQL 16 + PostGIS extension container for local development |
-| **Database Schema** | Complete Drizzle schema: `users`, `providers`, `vehicles`, `service_requests`, `offers`, `orders`, `reviews`, `notifications`, `audit_logs` |
-| **Auth & Security** | Phone OTP (Mock for dev / real SMS ready), JWT (Access + Refresh tokens), role guards |
-| **Spatial Matching Engine** | PostGIS `ST_DWithin` spatial query to find online providers within radius (5–10 km) in Astana |
-| **Offer Engine** | 3 pricing modes (`fixed`, `diagnostic_fee`, `estimate_range`), unique offer constraint per provider |
-| **Order State Machine** | Atomic offer selection (`SELECT FOR UPDATE`), transition guards (`PUBLISHED` → `OFFERS_RECEIVED` → `PROVIDER_SELECTED` → `IN_PROGRESS` → `COMPLETED` / `CANCELLED`) |
-| **Privacy Layer** | Customer exact location and phone masked until provider selection is confirmed |
-| **E2E Integration Test Suite** | Automated script validating the full request-to-review lifecycle against real PostgreSQL database |
-
-### Exit Criteria
-- `docker compose up -d` brings up PostgreSQL + PostGIS.
-- Drizzle migrations execute with 0 errors.
-- Automated E2E integration test completes all 6 lifecycle stages.
-- Concurrency test passes: double selection of different offers on the same request is atomically rejected.
+### Phase 0.5 — Supply Validation Gate (Operational Milestone)
+* **Goal:** Confirm supply willingness before scaling engineering assumptions.
+* **Gate Requirements:**
+  - Contact at least 20 auto electricians and mobile mechanics in Astana.
+  - At least 10 express willingness to receive leads.
+  - At least 5 active providers onboarded in the pilot district.
+  - Run manual concierge test requests: verify >= 2 relevant responses within 15 minutes.
+  - Complete >= 5 manual pilot transactions.
 
 ---
 
-## Slice 2 (Weeks 3–4) — Customer Journey (Mobile-First PWA)
+### Slice 1 — Domain + Transaction Core (Weeks 1–2)
 
-**Goal:** A car owner in Astana can create a request in 2 minutes, preview incoming offers in real-time, select a master, track progress, and rate the job.
+#### 1.1 Technical Stack & Foundation
+- Next.js 14+ with App Router (single repo, `src/app/api/...` route handlers).
+- TypeScript in `strict` mode (`noImplicitAny: true`, `strictNullChecks: true`).
+- PostgreSQL 16 with PostGIS extension (`geography(Point, 4326)`).
+- Drizzle ORM (`drizzle-orm`, `drizzle-kit`) with schema-first migrations.
+- Authentication: Phone OTP with mock provider for development, JWT via `jose` (15m access token, 30d refresh token).
 
-### Deliverables
+#### 1.2 Data Model & Schema
+- `users`: ID (UUID), phone, roles (`varchar[]`), created_at, updated_at, is_blocked.
+- `providers`: ID (UUID), user_id, business_name, provider_type (`STO`, `INDEPENDENT_MASTER`, `MOBILE_MASTER`), verification_level (`LEVEL_1_VERIFIED_SERVICE`, `LEVEL_2_VERIFIED_MASTER`, `LEVEL_3_NEW_PROVIDER`), description, created_at.
+- `provider_capabilities`: provider_id, capability (`BATTERY`, `AUTO_ELECTRIC`, `DIAGNOSTICS`, `MECHANICAL_MINOR`), is_active.
+- `provider_availability`: provider_id, is_online, location `geography(Point, 4326)`, radius_km (default 10), location_updated_at, auto_offline_at.
+- `vehicles`: ID (UUID), user_id, make, model, year, license_plate (optional).
+- `service_requests`: ID (UUID), customer_id, category (`electrical_starting`, `battery_jumpstart`, `mobile_mechanic`), required_capabilities (`varchar[]`), vehicle_id (nullable), description (optional), location `geography(Point, 4326)`, status (enum), current_radius_km (default 5), published_at, expires_at, next_expansion_at.
+- `request_media`: ID (UUID), request_id, file_key, file_url, created_at (max 3 per request).
+- `provider_offers`: ID (UUID), request_id, provider_id, pricing_mode (`fixed`, `diagnostic_fee`, `estimate_range`), amount_tiyn, min_amount_tiyn, max_amount_tiyn, eta_minutes, message, status (`SUBMITTED`, `ACCEPTED`, `REJECTED`, `WITHDRAWN`), created_at. `UNIQUE(request_id, provider_id)`.
+- `orders`: ID (UUID), request_id, offer_id, customer_id, provider_id, status (enum), agreed_pricing_mode, agreed_amount_tiyn, agreed_min_tiyn, agreed_max_tiyn, final_amount_tiyn, cancellation_reason, cancelled_by, created_at, updated_at.
+- `order_status_history`: ID (UUID), order_id, from_status, to_status, actor_id, actor_role, note, created_at.
+- `reviews`: ID (UUID), order_id (UNIQUE), from_user_id, to_user_id, rating (1–5), comment, created_at.
+- `notifications`: ID (UUID), user_id, type, title, body, payload (JSON), is_read, created_at.
+- `admin_audit_logs`: ID (UUID), admin_user_id, action, target_type, target_id, payload (JSON), created_at.
 
-| Task | Description |
-|------|-------------|
-| **Customer Shell** | Mobile-first responsive layout (PWA manifest, dark/light theme, clean automotive aesthetics) |
-| **Phone Auth UI** | Fast phone number entry + SMS OTP input with auto-focus and countdown timer |
-| **2-Step Request Wizard** | Step 1: Category picker (5 launch categories) + Vehicle + Description + Photo upload (client canvas compression). Step 2: Location picker (GPS auto-detection + map pin) |
-| **Realtime Offer Feed** | Live offer comparison screen (SSE / polling): Provider photo, rating, price model, ETA, distance |
-| **Provider Profile Modal** | View full provider details, verification badge, and past customer reviews before selecting |
-| **Active Order Tracker** | Real-time status tracker (En Route → Arrived → In Progress → Completed) with direct Call / WhatsApp buttons |
-| **Completion & Rating Screen** | 1–5 star rating + review text + price confirmation |
-| **Vehicle Garage** | Save vehicle profile (Make, Model, Year) for instant reuse |
+#### 1.3 State Machine & Order Lifecycle
+```
+[DRAFT] ───────► [PUBLISHED] ───────► [OFFERS_RECEIVED] ───────► [PROVIDER_SELECTED]
+    │                 │                     │                            │
+    ▼                 ▼                     ▼                            ▼
+[CANCELLED]       [CANCELLED]           [CANCELLED]                  [CANCELLED]
+                      │                     │
+                      ▼                     ▼
+                  [EXPIRED]             [EXPIRED]
 
-### Exit Criteria
-- Customer can complete full request creation on mobile Safari & Chrome in < 90 seconds.
-- Image uploads compress to < 500KB and upload reliably.
-- Real-time offers update automatically without manual page refresh.
+[PROVIDER_SELECTED] ──► [EN_ROUTE] ──► [ARRIVED] ──► [IN_PROGRESS] ──► [PENDING_COMPLETION]
+        │                   │              │                │                  │
+        ▼                   ▼              ▼                ▼                  ▼
+   [CANCELLED]         [CANCELLED]    [CANCELLED]      [CANCELLED]        [DISPUTED]
+                                                                               │
+                                                                               ▼
+[PENDING_COMPLETION] ───────────────────────────────────────────────► [COMPLETED]
+```
 
----
-
-## Slice 3 (Weeks 5–6) — Provider Journey & Telegram Bot
-
-**Goal:** Auto electricians and mechanics can register, go online, receive instant Telegram alerts for nearby requests, submit bids, and manage orders.
-
-### Deliverables
-
-| Task | Description |
-|------|-------------|
-| **Provider Onboarding UI** | Profile setup, business type (Independent Master / СТО), specialization selection (5 categories), document upload |
-| **Availability & Geolocation** | One-tap Online/Offline toggle with GPS capture and staleness auto-expiry (15 min) |
-| **Telegram Bot Integration** | Bot webhook linking provider account; instant alert with inline buttons when request matches radius |
-| **Quick-Bidding System** | Submit offer in 3 taps from Telegram or Web (`[5,000 ₸ Diagnostic]` / `[Custom Price]` + ETA) |
-| **Provider Active Order View** | Order execution screen with status buttons: `[Выехал]` → `[На месте]` → `[Начал работу]` → `[Завершил]` |
-| **Earnings & Job History** | Summary of completed orders, ratings received, and response metrics |
-
-### Exit Criteria
-- Provider receives Telegram alert within 3 seconds of request publication.
-- Provider can submit an offer directly from Telegram or mobile web.
-- State changes update the customer's screen immediately.
-
----
-
-## Slice 4 (Week 7) — Trust, Safety & Admin Moderation Panel
-
-**Goal:** Operations team has full control over provider verification, safety-critical filtering, dispute resolution, and marketplace health metrics.
-
-### Deliverables
-
-| Task | Description |
-|------|-------------|
-| **Admin Authentication** | Secure admin role authentication and audit logging for all moderation actions |
-| **Provider Verification Queue** | Review submitted documents (ИП, certificates, ID) and assign levels: `Level 1: Verified Service`, `Level 2: Verified Master`, `Level 3: New Provider` |
-| **Safety-Critical Category Gate** | Enforce restriction: unverified new providers cannot accept safety-critical jobs |
-| **Request & Order Inspector** | View all live requests, active orders, and cancellation reasons across Astana |
-| **Dispute & Report Management** | Interface to resolve customer/provider price disputes or bad behavior |
-| **Marketplace Health Dashboard** | Real-time tracking: Active Online Providers, Time to First Offer, Fulfillment Rate |
-
-### Exit Criteria
-- Admin can approve/reject provider documents and change trust levels.
-- Safety-critical categories are blocked for New Providers.
-- Dashboard accurately displays real-time marketplace metrics.
+#### 1.4 Background Worker & Database Timers
+- Node.js lightweight background interval (every 30s):
+  1. `Check Expiration`: `UPDATE service_requests SET status = 'EXPIRED' WHERE status IN ('PUBLISHED', 'OFFERS_RECEIVED') AND expires_at <= NOW()`
+  2. `Check Radius Expansion`: `UPDATE service_requests SET current_radius_km = LEAST(current_radius_km + 5, 20), next_expansion_at = NOW() + INTERVAL '3 minutes' WHERE status IN ('PUBLISHED', 'OFFERS_RECEIVED') AND next_expansion_at <= NOW() AND current_radius_km < 20`
+  3. `Check Auto-Offline`: `UPDATE provider_availability SET is_online = FALSE WHERE is_online = TRUE AND auto_offline_at <= NOW()`
 
 ---
 
-## Slice 5 (Week 8) — Hardening, Polish & Astana Pilot Onboarding
-
-**Goal:** Production deployment, edge-case hardening, field testing in Astana, and onboarding the first 15–20 real providers.
-
-### Deliverables
-
-| Task | Description |
-|------|-------------|
-| **Production Environment Setup** | Cloud VPS / Server deployment (Docker Compose, HTTPS/SSL, PostgreSQL backup schedule) |
-| **Network Resilience & PWA** | Offline handling, graceful reconnect on dropped mobile connection |
-| **Security Audit & Rate Limiting** | Strict IP and phone rate limits, IDOR protection on all order/offer endpoints |
-| **Astana Provider Onboarding** | Personal onboarding of 15–20 auto electricians and mechanics in Esil/Almaty districts |
-| **Closed Pilot Execution** | First 10–20 live test orders executed on Astana streets |
-
-### Exit Criteria
-- E2E smoke tests pass on production infrastructure.
-- At least 15 verified providers connected to Telegram bot and active in target districts.
-- First live customer request receives a real provider offer in < 5 minutes.
+### Slice 2 — Customer PWA (Weeks 3–4)
+- **Goal:** Frictionless request creation (< 2 mins) and live offer review.
+- Mobile PWA shell with manifest and responsive layout.
+- 2-step request creation:
+  - Step 1: Select category (3 MVP categories), optional description, optional 1–3 photo uploads with client-side canvas compression (< 500KB).
+  - Step 2: Location capture (Browser Geolocation API + map preview) and optional vehicle selection.
+- Live Offer Feed: SSE stream with fallback to manual REST refresh.
+- Offer selection modal showing pricing breakdown, provider verification badge, rating, and distance.
+- Direct Call / WhatsApp contact unlock upon selection.
+- Order completion screen with final price confirmation and 1–5 star rating submission.
 
 ---
 
-## End-to-End Test Matrix
+### Slice 3 — Provider Experience & Telegram Integration (Weeks 5–6)
+- **Goal:** Fast, reliable lead notifications and one-tap bidding for technicians.
+- Provider setup: Select capabilities, upload ID/ИП document, configure base radius.
+- Availability toggle: Online/Offline with GPS coordinate refresh.
+- Telegram Bot (@CarFixPartnerBot):
+  - Account linking via secure one-time token.
+  - Real-time lead alert when request is published within provider's radius.
+  - Inline keyboard for rapid bidding (`[5 000 ₸ Диагностика]` / `[Кастомная цена]` / `[Пропустить]`).
+- Web Provider Dashboard: Full request details, active order status controls (`[В пути]`, `[На месте]`, `[Начал работу]`, `[Завершил]`).
 
-| # | Test Scenario | Expected Outcome | Verification |
-|---|---------------|------------------|--------------|
-| 1 | Standard Flow | Request → 3 Offers → Select → Order → Complete → 5-Star Review | Automated E2E + Manual |
-| 2 | PostGIS Spatial Radius | Request at (51.128, 71.430) notifies providers at 2km, ignores providers at 25km | Integration Test |
-| 3 | Concurrency Protection | 2 simultaneous offer selections on 1 request → 1 succeeds, 1 gets 409 Conflict | Concurrency Test |
-| 4 | Privacy Protection | Provider cannot read customer phone or exact coordinates until selected | API Security Test |
-| 5 | Timeout & Auto-Offline | Inactive provider (> 4 hours without GPS update) excluded from matching | Unit / Cron Test |
-| 6 | New Provider Safety Gate | Level 3 provider cannot bid on safety-critical categories | RBAC Test |
+---
+
+### Slice 4 — Operations, Trust & Admin Panel (Week 7)
+- **Goal:** Operational control, provider quality moderation, and dispute handling.
+- Admin auth with dedicated role enforcement.
+- Provider Verification Queue: Review uploaded documents and assign:
+  - `LEVEL_1_VERIFIED_SERVICE` (Registered auto repair shop with physical address)
+  - `LEVEL_2_VERIFIED_MASTER` (Verified independent master with verified ID/ИП)
+  - `LEVEL_3_NEW_PROVIDER` (Unverified new provider, restricted categories)
+- Request & Order Inspector: Full view of live marketplace activity.
+- Dispute Resolution: Arbitrate price disagreements, update order status to `COMPLETED` or `CANCELLED`.
+- User & Provider management: Suspend / block fraudulent accounts with audit logging.
+
+---
+
+### Slice 5 — Field Pilot & Hardening (Week 8)
+- Production deployment on Linux VPS with Docker Compose, PostgreSQL 16 + PostGIS, Caddy / Nginx reverse proxy with SSL.
+- Security audit: IDOR verification on all endpoints, IP and phone rate limiting.
+- Onboard 15–20 active auto electricians and mobile mechanics in Astana (Esil/Almaty districts).
+- Execute closed pilot with real emergency breakdown requests.
+
+---
+
+## 4. Comprehensive Automated Test Matrix (22 Scenarios)
+
+| # | Test Scenario | Layer | Expected Behavior |
+|---|---------------|-------|-------------------|
+| 1 | Minimal Request Creation | Integration | Category + Location creates valid request with `vehicleId = null` |
+| 2 | PostGIS Spatial Matching | Integration | Provider within 5km matched; provider at 15km excluded until expansion |
+| 3 | Offline Provider Exclusion | Integration | Provider with `is_online = false` excluded from matching |
+| 4 | Stale Location Exclusion | Integration | Provider with `location_updated_at > 4h` excluded |
+| 5 | Capability-Based Matching | Integration | Request requiring `AUTO_ELECTRIC` matches only providers with that capability |
+| 6 | Verification Level Gate | Integration | Level 3 provider excluded from safety-critical requests |
+| 7 | Unique Offer Constraint | Integration | Duplicate offer from same provider on same request returns 409 Conflict |
+| 8 | Atomic Offer Selection | Concurrency | 2 concurrent selections on same request: exactly 1 succeeds, 1 returns 409 Conflict |
+| 9 | IDOR Protection (Requests) | Security | Customer A cannot view/cancel Customer B's request (returns 403) |
+| 10 | IDOR Protection (Orders) | Security | Provider A cannot update Provider B's order status (returns 403) |
+| 11 | Illegal State Transition | Unit | Transition `EN_ROUTE` → `COMPLETED` directly is rejected (400 Bad Request) |
+| 12 | Database Timer Persistence | Integration | Expired request marked `EXPIRED` by background worker after server restart |
+| 13 | Radius Expansion Worker | Integration | Request radius expands from 5km to 10km after 3 minutes if no offers accepted |
+| 14 | Provider Auto-Offline | Integration | Inactive online provider automatically switched offline after `autoOfflineAt` |
+| 15 | SSE Stream & Reconnect | Integration | Client reconnecting via REST receives accurate latest state |
+| 16 | Telegram Webhook Idempotency | Integration | Duplicate Telegram callback query executes action only once |
+| 17 | Customer Geolocation Privacy | Security | Provider sees approximate distance (~2.5km) but not exact coordinates before selection |
+| 18 | Contact Exchange Privacy | Security | Customer phone number hidden from provider until offer is selected |
+| 19 | Rating Eligibility Check | Integration | Rating before order status is `COMPLETED` is rejected |
+| 20 | Rating Uniqueness | Integration | Submitting second rating on same order returns 409 Conflict |
+| 21 | Final Price Validation | Integration | Final price in diagnostic fee mode must be integer > 0 in tiyn |
+| 22 | Admin Action Audit | Integration | Provider verification change creates immutable `admin_audit_logs` record |
+
+---
+
+## 5. Marketplace Readiness Gate Checklist
+
+Before launching the service to the general public in Astana:
+- [ ] Minimum 20 providers contacted in target pilot districts.
+- [ ] Minimum 10 providers onboarded and verified in Telegram Bot.
+- [ ] Minimum 5 active providers online during peak hours (08:00–20:00).
+- [ ] Test request receives >= 2 qualified offers in < 5 minutes.
+- [ ] Minimum 5 end-to-end pilot orders completed successfully with positive customer feedback.
+- [ ] All 22 automated integration tests pass in CI/CD pipeline.
