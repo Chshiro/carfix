@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: carfix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: carfix
+      POSTGRES_PASSWORD: carfix_secret
+      POSTGRES_DB: carfix_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carfix -d carfix_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
