@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RequestService } from '../../../../server/services/request.service';
+import { requireAuth } from '../../../../server/auth';
 import { AppError } from '../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +10,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const request = await RequestService.getRequestById(params.id);
+    const currentUser = await requireAuth(req);
+    const request = await RequestService.getRequestById(params.id, currentUser);
     return NextResponse.json({
       status: 'ok',
       data: request,
@@ -30,7 +32,7 @@ export async function GET(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Internal server error',
+          message: err instanceof Error ? err.message : 'Internal server error',
         },
       },
       { status: 500 }

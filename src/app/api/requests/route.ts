@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { RequestService } from '../../../server/services/request.service';
+import { requireAuth } from '../../../server/auth';
 import { AppError } from '../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
 const createRequestSchema = z.object({
-  customerId: z.string().uuid(),
   category: z.enum(['electrical_starting', 'battery_jumpstart', 'mobile_mechanic']),
   location: z.object({
     lat: z.number().min(-90).max(90),
@@ -18,11 +18,12 @@ const createRequestSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const currentUser = await requireAuth(req, ['motorist', 'admin']);
     const body = await req.json();
     const validated = createRequestSchema.parse(body);
 
     const result = await RequestService.createRequest({
-      customerId: validated.customerId,
+      customerId: currentUser.id,
       category: validated.category,
       location: validated.location,
       description: validated.description,
@@ -38,7 +39,6 @@ export async function POST(req: NextRequest) {
           status: result.request.status,
           currentRadiusKm: result.request.currentRadiusKm,
           matchedProvidersCount: result.matchedProvidersCount,
-          matchedProviders: result.matchedProviders,
           createdAt: result.request.createdAt,
         },
       },

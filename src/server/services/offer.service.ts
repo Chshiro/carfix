@@ -1,12 +1,9 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   providerOffers,
   providers,
   serviceRequests,
-  users,
-  providerCapabilities,
-  providerAvailability,
 } from '../../db/schema/index';
 import { PricingMode } from '../../types';
 import {
@@ -15,10 +12,11 @@ import {
   NotFoundError,
   ValidationError,
 } from '../errors';
+import { AuthUser } from '../auth';
+import { ProviderEligibilityService } from './eligibility.service';
 
 export interface CreateOfferInput {
   requestId: string;
-  providerId: string;
   pricingMode: PricingMode;
   amountTiyn?: number;
   minAmountTiyn?: number;
@@ -28,10 +26,15 @@ export interface CreateOfferInput {
 }
 
 export class OfferService {
-  static async createOffer(input: CreateOfferInput) {
+  /**
+   * Submits a provider offer for a service request.
+   *
+   * Provider identity is strictly bound to currentUser.providerId.
+   * Server-side eligibility is deterministically recomputed before insertion.
+   */
+  static async createOffer(input: CreateOfferInput, currentUser: AuthUser) {
     const {
       requestId,
-      providerId,
       pricingMode,
       amountTiyn,
       minAmountTiyn,
@@ -40,71 +43,31 @@ export class OfferService {
       message,
     } = input;
 
-    // 1. Verify Provider exists and is not blocked
-    const [provider] = await db
-      .select()
-      .from(providers)
-      .where(eq(providers.id, providerId));
-
-    if (!provider) {
-      throw new NotFoundError('Provider not found');
+    // 1. Verify currentUser has an active provider profile
+    if (!currentUser.providerId || !currentUser.roles.includes('provider')) {
+      throw new ForbiddenError('Only registered service providers can submit offers');
     }
 
-    const [providerUser] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, provider.userId));
-
-    if (!providerUser || providerUser.isBlocked) {
-      throw new ForbiddenError('Provider account is blocked or inactive');
+    if (currentUser.isBlocked) {
+      throw new ForbiddenError('Provider account is blocked');
     }
 
-    // 2. Verify Request exists and is active
-    const [request] = await db
-      .select()
-      .from(serviceRequests)
-      .where(eq(serviceRequests.id, requestId));
+    const providerId = currentUser.providerId;
 
-    if (!request) {
-      throw new NotFoundError('Service request not found');
-    }
+    // 2. Comprehensive Server-Side Eligibility Recomputation
+    // "Provider eligibility is recomputed server-side before offer submission."
+    const { request } = await ProviderEligibilityService.assertEligible(providerId, requestId);
 
-    if (request.status !== 'PUBLISHED' && request.status !== 'OFFERS_RECEIVED') {
-      throw new ConflictError(
-        `Cannot submit offer: request is in status '${request.status}'`
-      );
-    }
-
-    if (new Date(request.expiresAt).getTime() <= Date.now()) {
-      throw new ConflictError('Cannot submit offer: request has expired');
-    }
-
-    // 3. Verify Provider Capability Eligibility (OR semantics)
-    const capabilities = await db
-      .select()
-      .from(providerCapabilities)
-      .where(
-        and(
-          eq(providerCapabilities.providerId, providerId),
-          eq(providerCapabilities.isActive, true)
-        )
-      );
-
-    const hasMatchingCapability = capabilities.some((c) =>
-      request.requiredCapabilities.includes(c.capability)
-    );
-
-    if (!hasMatchingCapability) {
-      throw new ForbiddenError(
-        'Provider does not have the required capabilities for this request'
-      );
-    }
-
-    // 4. Validate Pricing Mode and amounts in tiyn
+    // 3. Strict Pricing Integrity Validation
     if (pricingMode === 'fixed' || pricingMode === 'diagnostic_fee') {
       if (!amountTiyn || amountTiyn <= 0 || !Number.isInteger(amountTiyn)) {
         throw new ValidationError(
           `Pricing mode '${pricingMode}' requires a positive integer amount in tiyn`
+        );
+      }
+      if (minAmountTiyn != null || maxAmountTiyn != null) {
+        throw new ValidationError(
+          `Pricing mode '${pricingMode}' must not contain min or max estimate amounts`
         );
       }
     } else if (pricingMode === 'estimate_range') {
@@ -120,16 +83,26 @@ export class OfferService {
           'Estimate range requires positive integer min and max amounts in tiyn where max >= min'
         );
       }
+      if (amountTiyn != null) {
+        throw new ValidationError(
+          'Estimate range pricing must not contain a fixed amount in tiyn'
+        );
+      }
     } else {
       throw new ValidationError(`Invalid pricing mode '${pricingMode}'`);
     }
 
-    // 5. Validate ETA
-    if (!etaMinutes || etaMinutes <= 0 || etaMinutes > 480 || !Number.isInteger(etaMinutes)) {
-      throw new ValidationError('ETA must be an integer between 1 and 480 minutes (8 hours max)');
+    // 4. Validate ETA
+    if (!etaMinutes || etaMinutes < 1 || etaMinutes > 480 || !Number.isInteger(etaMinutes)) {
+      throw new ValidationError('ETA must be an integer between 1 and 480 minutes');
     }
 
-    // 6. Check for duplicate offer
+    // 5. Validate Message length
+    if (message && message.length > 500) {
+      throw new ValidationError('Offer message must not exceed 500 characters');
+    }
+
+    // 6. Check for Duplicate Offer
     const [existingOffer] = await db
       .select()
       .from(providerOffers)
@@ -144,36 +117,43 @@ export class OfferService {
       throw new ConflictError('Provider has already submitted an offer for this request');
     }
 
-    // 7. Insert Offer & update request status to OFFERS_RECEIVED if needed
+    // 7. Atomic Insert Offer & Update Request Status if PUBLISHED
     const now = new Date();
-    const [offer] = await db
-      .insert(providerOffers)
-      .values({
-        requestId,
-        providerId,
-        pricingMode,
-        amountTiyn: amountTiyn || null,
-        minAmountTiyn: minAmountTiyn || null,
-        maxAmountTiyn: maxAmountTiyn || null,
-        etaMinutes,
-        message: message || null,
-        status: 'SUBMITTED',
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+    return await db.transaction(async (tx) => {
+      const [offer] = await tx
+        .insert(providerOffers)
+        .values({
+          requestId,
+          providerId,
+          pricingMode,
+          amountTiyn: pricingMode !== 'estimate_range' ? amountTiyn : null,
+          minAmountTiyn: pricingMode === 'estimate_range' ? minAmountTiyn : null,
+          maxAmountTiyn: pricingMode === 'estimate_range' ? maxAmountTiyn : null,
+          etaMinutes,
+          message: message ? message.trim() : null,
+          status: 'SUBMITTED',
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
 
-    if (request.status === 'PUBLISHED') {
-      await db
-        .update(serviceRequests)
-        .set({ status: 'OFFERS_RECEIVED', updatedAt: now })
-        .where(eq(serviceRequests.id, requestId));
-    }
+      if (request.status === 'PUBLISHED') {
+        await tx
+          .update(serviceRequests)
+          .set({ status: 'OFFERS_RECEIVED', updatedAt: now })
+          .where(
+            and(
+              eq(serviceRequests.id, requestId),
+              eq(serviceRequests.status, 'PUBLISHED')
+            )
+          );
+      }
 
-    return offer;
+      return offer;
+    });
   }
 
-  static async getOffersForRequest(requestId: string, requestingUserId: string) {
+  static async getOffersForRequest(requestId: string, currentUser: AuthUser) {
     const [request] = await db
       .select()
       .from(serviceRequests)
@@ -183,14 +163,13 @@ export class OfferService {
       throw new NotFoundError('Service request not found');
     }
 
-    // Anti-IDOR check: customer who owns the request, or check if user is admin or provider
-    const [requestingUser] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, requestingUserId));
+    const isCustomerOwner = request.customerId === currentUser.id;
+    const isAdmin = currentUser.roles.includes('admin');
+    const isProvider = currentUser.roles.includes('provider') && !!currentUser.providerId;
 
-    const isCustomerOwner = request.customerId === requestingUserId;
-    const isAdmin = requestingUser?.roles?.includes('admin');
+    if (!isCustomerOwner && !isAdmin && !isProvider) {
+      throw new ForbiddenError('You do not have permission to view offers for this request');
+    }
 
     // Fetch offers joined with provider details
     const offersWithProviders = await db
@@ -216,18 +195,15 @@ export class OfferService {
       .innerJoin(providers, eq(providers.id, providerOffers.providerId))
       .where(eq(providerOffers.requestId, requestId));
 
-    if (!isCustomerOwner && !isAdmin) {
-      // If a provider is requesting, only return their own offer
-      const [provider] = await db
-        .select()
-        .from(providers)
-        .where(eq(providers.userId, requestingUserId));
-
-      if (!provider) {
-        throw new ForbiddenError('You do not have permission to view offers for this request');
-      }
-
-      return offersWithProviders.filter((o) => o.providerId === provider.id);
+    // If caller is a provider (and not customer owner/admin), return ONLY their own offer
+    if (isProvider && !isCustomerOwner && !isAdmin) {
+      const ownOffers = offersWithProviders.filter(
+        (o) => o.providerId === currentUser.providerId
+      );
+      return ownOffers.map((o) => ({
+        ...o,
+        rating: Number(o.rating) / 100,
+      }));
     }
 
     return offersWithProviders.map((o) => ({

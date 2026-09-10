@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS postgis;
+--> statement-breakpoint
 CREATE TABLE "order_status_history" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"order_id" uuid NOT NULL,
@@ -160,4 +162,6 @@ CREATE UNIQUE INDEX "uq_reviews_order_from_user" ON "reviews" USING btree ("orde
 CREATE INDEX "idx_reviews_to_user" ON "reviews" USING btree ("to_user_id");--> statement-breakpoint
 CREATE INDEX "idx_service_requests_location" ON "service_requests" USING gist ("location");--> statement-breakpoint
 CREATE INDEX "idx_service_requests_status_category" ON "service_requests" USING btree ("status","category");--> statement-breakpoint
-CREATE INDEX "idx_service_requests_customer_created" ON "service_requests" USING btree ("customer_id","created_at");
+CREATE INDEX "idx_service_requests_customer_created" ON "service_requests" USING btree ("customer_id","created_at");--> statement-breakpoint
+ALTER TABLE "provider_offers" ADD CONSTRAINT "chk_provider_offers_eta" CHECK ("eta_minutes" >= 1 AND "eta_minutes" <= 480);--> statement-breakpoint
+ALTER TABLE "provider_offers" ADD CONSTRAINT "chk_provider_offers_pricing" CHECK (("pricing_mode" IN ('fixed', 'diagnostic_fee') AND "amount_tiyn" > 0 AND "min_amount_tiyn" IS NULL AND "max_amount_tiyn" IS NULL) OR ("pricing_mode" = 'estimate_range' AND "min_amount_tiyn" > 0 AND "max_amount_tiyn" >= "min_amount_tiyn" AND "amount_tiyn" IS NULL));

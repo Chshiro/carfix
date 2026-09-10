@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { OrderService } from '../../../../../server/services/order.service';
+import { requireAuth } from '../../../../../server/auth';
 import { AppError } from '../../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
 const selectOfferSchema = z.object({
   offerId: z.string().uuid(),
-  customerId: z.string().uuid(),
 });
 
 export async function POST(
@@ -15,14 +15,17 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const currentUser = await requireAuth(req, ['motorist', 'admin']);
     const body = await req.json();
     const validated = selectOfferSchema.parse(body);
 
-    const result = await OrderService.selectOffer({
-      requestId: params.id,
-      offerId: validated.offerId,
-      customerId: validated.customerId,
-    });
+    const result = await OrderService.selectOffer(
+      {
+        requestId: params.id,
+        offerId: validated.offerId,
+      },
+      currentUser
+    );
 
     return NextResponse.json(
       {

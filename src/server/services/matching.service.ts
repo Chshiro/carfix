@@ -13,6 +13,16 @@ export interface MatchedProvider {
   distanceKm: number;
 }
 
+interface RawMatchingRow extends Record<string, unknown> {
+  provider_id: string;
+  business_name: string;
+  provider_type: string;
+  verification_level: string;
+  rating: number | string;
+  completed_jobs: number | string;
+  distance_meters: number | string;
+}
+
 export class MatchingService {
   /**
    * Maps canonical MVP categories to required capabilities (OR semantics)
@@ -52,15 +62,7 @@ export class MatchingService {
     const capArraySql = sql`ARRAY[${sql.join(capSqlElements, sql`, `)}]`;
 
     // PostgreSQL / PostGIS parameterized query
-    const results = await db.execute<{
-      provider_id: string;
-      business_name: string;
-      provider_type: string;
-      verification_level: string;
-      rating: number;
-      completed_jobs: number;
-      distance_meters: number;
-    }>(sql`
+    const results = await db.execute<RawMatchingRow>(sql`
       SELECT 
         p.id AS provider_id,
         p.business_name,
@@ -85,7 +87,9 @@ export class MatchingService {
       ORDER BY distance_meters ASC
     `);
 
-    return (results as any[]).map((row) => ({
+    const rows = results as unknown as RawMatchingRow[];
+
+    return rows.map((row) => ({
       providerId: row.provider_id,
       businessName: row.business_name,
       providerType: row.provider_type,

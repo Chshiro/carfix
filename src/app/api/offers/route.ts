@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { OfferService } from '../../../server/services/offer.service';
+import { requireAuth } from '../../../server/auth';
 import { AppError } from '../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
 const createOfferSchema = z.object({
   requestId: z.string().uuid(),
-  providerId: z.string().uuid(),
   pricingMode: z.enum(['fixed', 'diagnostic_fee', 'estimate_range']),
   amountTiyn: z.number().int().positive().optional(),
   minAmountTiyn: z.number().int().positive().optional(),
@@ -18,19 +18,22 @@ const createOfferSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const currentUser = await requireAuth(req, ['provider']);
     const body = await req.json();
     const validated = createOfferSchema.parse(body);
 
-    const offer = await OfferService.createOffer({
-      requestId: validated.requestId,
-      providerId: validated.providerId,
-      pricingMode: validated.pricingMode,
-      amountTiyn: validated.amountTiyn,
-      minAmountTiyn: validated.minAmountTiyn,
-      maxAmountTiyn: validated.maxAmountTiyn,
-      etaMinutes: validated.etaMinutes,
-      message: validated.message,
-    });
+    const offer = await OfferService.createOffer(
+      {
+        requestId: validated.requestId,
+        pricingMode: validated.pricingMode,
+        amountTiyn: validated.amountTiyn,
+        minAmountTiyn: validated.minAmountTiyn,
+        maxAmountTiyn: validated.maxAmountTiyn,
+        etaMinutes: validated.etaMinutes,
+        message: validated.message,
+      },
+      currentUser
+    );
 
     return NextResponse.json(
       {

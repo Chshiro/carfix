@@ -13,11 +13,11 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '../errors';
+import { AuthUser } from '../auth';
 
 export interface SelectOfferInput {
   requestId: string;
   offerId: string;
-  customerId: string;
 }
 
 export class OrderService {
@@ -25,19 +25,20 @@ export class OrderService {
    * 11-Step Canonical Atomic Offer Selection:
    * BEGIN
    * 1. SELECT service_request FOR UPDATE (row lock)
-   * 2. Verify request status allows selection (PUBLISHED or OFFERS_RECEIVED)
-   * 3. Verify offer belongs to this request
-   * 4. Verify offer is still selectable (status = SUBMITTED)
-   * 5. Verify provider remains eligible & not blocked
-   * 6. Create Order record (status = PROVIDER_SELECTED)
-   * 7. Mark selected offer as ACCEPTED
-   * 8. Mark other submitted offers for this request as REJECTED
-   * 9. Update request status to PROVIDER_SELECTED
-   * 10. Insert initial order_status_history record
+   * 2. Verify ownership (customer owner or admin)
+   * 3. Verify request status allows selection (PUBLISHED or OFFERS_RECEIVED)
+   * 4. Verify request is not expired (expiresAt > NOW())
+   * 5. SELECT provider_offer FOR UPDATE (row lock) & verify offer belongs to request
+   * 6. Verify offer is still selectable (status = SUBMITTED)
+   * 7. Verify provider remains eligible & not blocked
+   * 8. Create Order record (status = PROVIDER_SELECTED)
+   * 9. Mark selected offer as ACCEPTED
+   * 10. Mark other submitted offers for this request as REJECTED
+   * 11. Update request status to PROVIDER_SELECTED & insert initial order_status_history
    * COMMIT
    */
-  static async selectOffer(input: SelectOfferInput) {
-    const { requestId, offerId, customerId } = input;
+  static async selectOffer(input: SelectOfferInput, currentUser: AuthUser) {
+    const { requestId, offerId } = input;
 
     return await db.transaction(async (tx) => {
       // 1. SELECT service_request FOR UPDATE
@@ -51,19 +52,26 @@ export class OrderService {
         throw new NotFoundError('Service request not found');
       }
 
-      // IDOR / Ownership Check
-      if (request.customerId !== customerId) {
+      // 2. IDOR / Ownership Check
+      const isOwner = request.customerId === currentUser.id;
+      const isAdmin = currentUser.roles.includes('admin');
+      if (!isOwner && !isAdmin) {
         throw new ForbiddenError('Only the customer who created this request can select an offer');
       }
 
-      // 2. Verify request status allows selection
+      // 3. Verify request status allows selection
       if (request.status !== 'PUBLISHED' && request.status !== 'OFFERS_RECEIVED') {
         throw new ConflictError(
           `Cannot select offer: request is in status '${request.status}'`
         );
       }
 
-      // 3. Verify offer belongs to this request & lock offer row
+      // 4. Expiration check during offer selection
+      if (new Date(request.expiresAt).getTime() <= Date.now()) {
+        throw new ConflictError('Cannot select offer: request has expired');
+      }
+
+      // 5. Verify offer belongs to this request & lock offer row
       const [offer] = await tx
         .select()
         .from(providerOffers)
@@ -79,14 +87,14 @@ export class OrderService {
         throw new NotFoundError('Offer not found for this request');
       }
 
-      // 4. Verify offer is still selectable
+      // 6. Verify offer is still selectable
       if (offer.status !== 'SUBMITTED') {
         throw new ConflictError(
           `Cannot select offer: offer is already in status '${offer.status}'`
         );
       }
 
-      // 5. Verify provider remains eligible & not blocked
+      // 7. Verify provider remains eligible & not blocked
       const [provider] = await tx
         .select()
         .from(providers)
@@ -107,7 +115,7 @@ export class OrderService {
 
       const now = new Date();
 
-      // 6. Create Order record
+      // 8. Create Order record
       const [order] = await tx
         .insert(orders)
         .values({
@@ -127,13 +135,13 @@ export class OrderService {
         })
         .returning();
 
-      // 7. Mark selected offer as ACCEPTED
+      // 9. Mark selected offer as ACCEPTED
       await tx
         .update(providerOffers)
         .set({ status: 'ACCEPTED', updatedAt: now })
         .where(eq(providerOffers.id, offer.id));
 
-      // 8. Mark all other submitted offers for this request as REJECTED
+      // 10. Mark all other submitted offers for this request as REJECTED
       await tx
         .update(providerOffers)
         .set({ status: 'REJECTED', updatedAt: now })
@@ -145,19 +153,18 @@ export class OrderService {
           )
         );
 
-      // 9. Update request status to PROVIDER_SELECTED
+      // 11. Update request status to PROVIDER_SELECTED & record history
       await tx
         .update(serviceRequests)
         .set({ status: 'PROVIDER_SELECTED', updatedAt: now })
         .where(eq(serviceRequests.id, request.id));
 
-      // 10. Insert initial order_status_history record
       await tx.insert(orderStatusHistory).values({
         orderId: order.id,
         fromStatus: null,
         toStatus: 'PROVIDER_SELECTED',
-        actorId: customerId,
-        actorRole: 'motorist',
+        actorId: currentUser.id,
+        actorRole: currentUser.roles.includes('admin') ? 'admin' : 'motorist',
         note: 'Offer accepted by customer',
         createdAt: now,
       });
@@ -182,7 +189,7 @@ export class OrderService {
     });
   }
 
-  static async getOrderById(orderId: string, requestingUserId: string) {
+  static async getOrderById(orderId: string, currentUser: AuthUser) {
     const [order] = await db
       .select()
       .from(orders)
@@ -198,14 +205,9 @@ export class OrderService {
       .where(eq(providers.id, order.providerId));
 
     // Anti-IDOR check: customer or provider or admin
-    const isCustomer = order.customerId === requestingUserId;
-    const isProvider = provider?.userId === requestingUserId;
-
-    const [requestingUser] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, requestingUserId));
-    const isAdmin = requestingUser?.roles?.includes('admin');
+    const isCustomer = order.customerId === currentUser.id;
+    const isProvider = provider?.userId === currentUser.id;
+    const isAdmin = currentUser.roles.includes('admin');
 
     if (!isCustomer && !isProvider && !isAdmin) {
       throw new ForbiddenError('You do not have permission to view this order');

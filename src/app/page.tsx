@@ -1,19 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 type ServiceCategory = 'electrical_starting' | 'battery_jumpstart' | 'mobile_mechanic';
 type PricingMode = 'fixed' | 'diagnostic_fee' | 'estimate_range';
-
-interface MatchedProvider {
-  providerId: string;
-  businessName: string;
-  providerType: string;
-  verificationLevel: string;
-  rating: number;
-  completedJobs: number;
-  distanceKm: number;
-}
 
 interface OfferItem {
   id: string;
@@ -32,9 +22,35 @@ interface OfferItem {
   status: string;
 }
 
-const SEED_CUSTOMER_ID = 'c0000000-0000-0000-0000-000000000001';
+interface OrderResult {
+  order: {
+    id: string;
+    status: string;
+    agreedPricingMode: string;
+    agreedAmountTiyn: number | null;
+    agreedMinTiyn: number | null;
+    agreedMaxTiyn: number | null;
+  };
+  provider: {
+    id: string;
+    businessName: string;
+    providerType: string;
+    rating: number;
+  };
+  offer: {
+    id: string;
+    pricingMode: PricingMode;
+    amountTiyn: number | null;
+    minAmountTiyn: number | null;
+    maxAmountTiyn: number | null;
+    etaMinutes: number;
+  };
+}
 
-const SEED_PROVIDERS = [
+// Seed identities used strictly in DEMO sandbox mode
+const DEMO_CUSTOMER_USER_ID = 'c0000000-0000-0000-0000-000000000001';
+
+const DEMO_PROVIDERS = [
   { id: 'b1000000-0000-0000-0000-000000000001', name: 'Мастер Азамат (Автоэлектрик/АКБ)' },
   { id: 'b2000000-0000-0000-0000-000000000002', name: 'СТО Барыс (Диагностика/Электрика)' },
   { id: 'b3000000-0000-0000-0000-000000000003', name: 'Срочная Прикурка Астана (Бауыржан)' },
@@ -54,14 +70,16 @@ export default function App() {
   // Request State
   const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
   const [matchedCount, setMatchedCount] = useState<number | null>(null);
-  const [matchedProviders, setMatchedProviders] = useState<MatchedProvider[]>([]);
 
   // Offers State
   const [offers, setOffers] = useState<OfferItem[]>([]);
-  const [selectedOrderResult, setSelectedOrderResult] = useState<any>(null);
+  const [selectedOrderResult, setSelectedOrderResult] = useState<OrderResult | null>(null);
+
+  // Demo Auth Tokens cache
+  const [customerToken, setCustomerToken] = useState<string | null>(null);
 
   // Provider Sandbox Form State
-  const [activeProviderId, setActiveProviderId] = useState<string>(SEED_PROVIDERS[0].id);
+  const [activeProviderId, setActiveProviderId] = useState<string>(DEMO_PROVIDERS[0].id);
   const [offerPricingMode, setOfferPricingMode] = useState<PricingMode>('diagnostic_fee');
   const [offerPriceKzt, setOfferPriceKzt] = useState<number>(5000);
   const [offerMinPriceKzt, setOfferMinPriceKzt] = useState<number>(15000);
@@ -70,6 +88,31 @@ export default function App() {
   const [offerMessage, setOfferMessage] = useState<string>('Могу приехать быстро с оборудованием');
   const [isSubmittingOffer, setIsSubmittingOffer] = useState<boolean>(false);
   const [offerStatusMsg, setOfferStatusMsg] = useState<string | null>(null);
+
+  // Helper to fetch a valid JWT token in demo mode
+  const getDemoToken = useCallback(async (userId?: string, providerId?: string): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/auth/demo-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, providerId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        return data.data.token as string;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Initialize customer demo token
+  useEffect(() => {
+    getDemoToken(DEMO_CUSTOMER_USER_ID).then((token) => {
+      if (token) setCustomerToken(token);
+    });
+  }, [getDemoToken]);
 
   // Geolocation handler
   const handleGetLocation = () => {
@@ -96,11 +139,24 @@ export default function App() {
   const handleCreateRequest = async () => {
     setIsPublishing(true);
     try {
+      let token = customerToken;
+      if (!token) {
+        token = await getDemoToken(DEMO_CUSTOMER_USER_ID);
+        if (token) setCustomerToken(token);
+      }
+
+      if (!token) {
+        alert('Ошибка аутентификации в демо-режиме');
+        return;
+      }
+
       const res = await fetch('/api/requests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          customerId: SEED_CUSTOMER_ID,
           category,
           location: { lat, lng },
           description: description || undefined,
@@ -111,24 +167,27 @@ export default function App() {
       if (res.ok && data.status === 'ok') {
         setCreatedRequestId(data.data.requestId);
         setMatchedCount(data.data.matchedProvidersCount);
-        setMatchedProviders(data.data.matchedProviders || []);
         setSelectedOrderResult(null);
         setOffers([]);
       } else {
         alert(`Ошибка создания заявки: ${data.error?.message || 'Неизвестная ошибка'}`);
       }
-    } catch (e: any) {
-      alert(`Сбой сети: ${e.message}`);
+    } catch (e: unknown) {
+      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       setIsPublishing(false);
     }
   };
 
   // Poll / Fetch Offers for Created Request
-  const fetchOffers = React.useCallback(async () => {
-    if (!createdRequestId) return;
+  const fetchOffers = useCallback(async () => {
+    if (!createdRequestId || !customerToken) return;
     try {
-      const res = await fetch(`/api/requests/${createdRequestId}/offers?userId=${SEED_CUSTOMER_ID}`);
+      const res = await fetch(`/api/requests/${createdRequestId}/offers`, {
+        headers: {
+          Authorization: `Bearer ${customerToken}`,
+        },
+      });
       const data = await res.json();
       if (res.ok && data.status === 'ok') {
         setOffers(data.data);
@@ -136,7 +195,7 @@ export default function App() {
     } catch (e) {
       console.error('Error fetching offers:', e);
     }
-  }, [createdRequestId]);
+  }, [createdRequestId, customerToken]);
 
   useEffect(() => {
     if (!createdRequestId || selectedOrderResult) return;
@@ -154,25 +213,44 @@ export default function App() {
     setIsSubmittingOffer(true);
     setOfferStatusMsg(null);
 
-    const body: any = {
-      requestId: createdRequestId,
-      providerId: activeProviderId,
-      pricingMode: offerPricingMode,
-      etaMinutes: offerEta,
-      message: offerMessage || undefined,
-    };
-
-    if (offerPricingMode === 'fixed' || offerPricingMode === 'diagnostic_fee') {
-      body.amountTiyn = offerPriceKzt * 100;
-    } else {
-      body.minAmountTiyn = offerMinPriceKzt * 100;
-      body.maxAmountTiyn = offerMaxPriceKzt * 100;
-    }
-
     try {
+      // Get JWT for the active provider
+      const providerToken = await getDemoToken(undefined, activeProviderId);
+      if (!providerToken) {
+        setOfferStatusMsg('❌ Ошибка авторизации мастера');
+        return;
+      }
+
+      interface OfferPayload {
+        requestId: string;
+        pricingMode: PricingMode;
+        amountTiyn?: number;
+        minAmountTiyn?: number;
+        maxAmountTiyn?: number;
+        etaMinutes: number;
+        message?: string;
+      }
+
+      const body: OfferPayload = {
+        requestId: createdRequestId,
+        pricingMode: offerPricingMode,
+        etaMinutes: offerEta,
+        message: offerMessage ? offerMessage.trim() : undefined,
+      };
+
+      if (offerPricingMode === 'fixed' || offerPricingMode === 'diagnostic_fee') {
+        body.amountTiyn = offerPriceKzt * 100;
+      } else {
+        body.minAmountTiyn = offerMinPriceKzt * 100;
+        body.maxAmountTiyn = offerMaxPriceKzt * 100;
+      }
+
       const res = await fetch('/api/offers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${providerToken}`,
+        },
         body: JSON.stringify(body),
       });
 
@@ -183,34 +261,34 @@ export default function App() {
       } else {
         setOfferStatusMsg(`❌ Ошибка: ${data.error?.message || 'Сбой'}`);
       }
-    } catch (e: any) {
-      setOfferStatusMsg(`❌ Ошибка сети: ${e.message}`);
+    } catch (e: unknown) {
+      setOfferStatusMsg(`❌ Ошибка сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       setIsSubmittingOffer(false);
     }
   };
 
-  // Select Offer (Customer Atomic Action)
+  // Select Offer (Customer Action)
   const handleSelectOffer = async (offerId: string) => {
-    if (!createdRequestId) return;
+    if (!createdRequestId || !customerToken) return;
     try {
       const res = await fetch(`/api/requests/${createdRequestId}/select`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          offerId,
-          customerId: SEED_CUSTOMER_ID,
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${customerToken}`,
+        },
+        body: JSON.stringify({ offerId }),
       });
 
       const data = await res.json();
       if (res.ok && data.status === 'ok') {
-        setSelectedOrderResult(data.data);
+        setSelectedOrderResult(data.data as OrderResult);
       } else {
         alert(`Ошибка выбора мастера: ${data.error?.message || 'Сбой'}`);
       }
-    } catch (e: any) {
-      alert(`Сбой сети: ${e.message}`);
+    } catch (e: unknown) {
+      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
   };
 
@@ -218,7 +296,7 @@ export default function App() {
     <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <header style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
         <h1 style={{ margin: '0 0 0.5rem 0', color: '#0f172a' }}>🚗 CarFix — Скорая автопомощь в Астане</h1>
-        <p style={{ margin: 0, color: '#64748b' }}>Real-Time Automotive Marketplace | End-to-End Vertical Slice</p>
+        <p style={{ margin: 0, color: '#64748b' }}>Real-Time Automotive Marketplace | End-to-End Vertical Slice (Security Hardened)</p>
       </header>
 
       {/* STEP 1: CUSTOMER REQUEST WIZARD */}
@@ -322,19 +400,6 @@ export default function App() {
           <p style={{ margin: '0.25rem 0', color: '#15803d' }}>
             <strong>Радиус поиска:</strong> 5 км | <strong>Статус:</strong> PUBLISHED
           </p>
-
-          {matchedProviders.length > 0 && (
-            <div style={{ marginTop: '1rem' }}>
-              <div style={{ fontWeight: 600, color: '#166534', marginBottom: '0.5rem' }}>Подходящие мастера в радиусе:</div>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem', color: '#14532d' }}>
-                {matchedProviders.map((p) => (
-                  <li key={p.providerId} style={{ marginBottom: '0.25rem' }}>
-                    <strong>{p.businessName}</strong> ({p.providerType}) — ⭐ {p.rating.toFixed(1)} ({p.completedJobs} заказов) — 📍 ~{p.distanceKm} км
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       )}
 
@@ -354,7 +419,7 @@ export default function App() {
                 onChange={(e) => setActiveProviderId(e.target.value)}
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
               >
-                {SEED_PROVIDERS.map((p) => (
+                {DEMO_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
@@ -547,9 +612,9 @@ export default function App() {
               <div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Согласованная цена:</div>
                 <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#166534' }}>
-                  {selectedOrderResult.offer.pricingMode === 'fixed' && `${(selectedOrderResult.offer.amountTiyn / 100).toLocaleString()} ₸`}
-                  {selectedOrderResult.offer.pricingMode === 'diagnostic_fee' && `${(selectedOrderResult.offer.amountTiyn / 100).toLocaleString()} ₸ (Диагностика)`}
-                  {selectedOrderResult.offer.pricingMode === 'estimate_range' && `${(selectedOrderResult.offer.minAmountTiyn / 100).toLocaleString()}–${(selectedOrderResult.offer.maxAmountTiyn / 100).toLocaleString()} ₸`}
+                  {selectedOrderResult.offer.pricingMode === 'fixed' && `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸`}
+                  {selectedOrderResult.offer.pricingMode === 'diagnostic_fee' && `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸ (Диагностика)`}
+                  {selectedOrderResult.offer.pricingMode === 'estimate_range' && `${((selectedOrderResult.offer.minAmountTiyn || 0) / 100).toLocaleString()}–${((selectedOrderResult.offer.maxAmountTiyn || 0) / 100).toLocaleString()} ₸`}
                 </div>
               </div>
 

@@ -9,8 +9,9 @@ import {
   customType,
   index,
   uniqueIndex,
+  check,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // Custom PostGIS geography(Point, 4326) type for Drizzle
 export const geographyPoint = customType<{
@@ -18,18 +19,29 @@ export const geographyPoint = customType<{
   driverData: string;
 }>({
   dataType() {
-    return 'geography';
+    return 'geography(Point, 4326)';
   },
   toDriver(value: { lng: number; lat: number }): string {
     return `SRID=4326;POINT(${value.lng} ${value.lat})`;
   },
-  fromDriver(value: string): { lng: number; lat: number } {
-    if (typeof value === 'object' && value !== null) {
-      return value as { lng: number; lat: number };
+  fromDriver(value: string | { lng: number; lat: number }): { lng: number; lat: number } {
+    if (typeof value === 'object' && value !== null && 'lng' in value && 'lat' in value) {
+      return { lng: Number(value.lng), lat: Number(value.lat) };
     }
-    const matches = String(value).match(/POINT\(([-\d.]+)\s+([-\d.]+)\)/i);
+    const str = String(value);
+    const matches = str.match(/POINT\(([-\d.]+)\s+([-\d.]+)\)/i);
     if (matches) {
       return { lng: parseFloat(matches[1]), lat: parseFloat(matches[2]) };
+    }
+    if (/^[0-9a-fA-F]{42,}$/.test(str)) {
+      const buf = Buffer.from(str, 'hex');
+      const isLE = buf[0] === 1;
+      const type = isLE ? buf.readUInt32LE(1) : buf.readUInt32BE(1);
+      const hasSrid = (type & 0x20000000) !== 0;
+      const offset = hasSrid ? 9 : 5;
+      const lng = isLE ? buf.readDoubleLE(offset) : buf.readDoubleBE(offset);
+      const lat = isLE ? buf.readDoubleLE(offset + 8) : buf.readDoubleBE(offset + 8);
+      return { lng, lat };
     }
     return { lng: 0, lat: 0 };
   },
@@ -178,6 +190,14 @@ export const providerOffers = pgTable(
     uniqueIndex('uq_provider_offers_request_provider').on(table.requestId, table.providerId),
     index('idx_provider_offers_request_status').on(table.requestId, table.status),
     index('idx_provider_offers_provider').on(table.providerId, table.createdAt),
+    check(
+      'chk_provider_offers_eta',
+      sql`${table.etaMinutes} >= 1 AND ${table.etaMinutes} <= 480`
+    ),
+    check(
+      'chk_provider_offers_pricing',
+      sql`(${table.pricingMode} IN ('fixed', 'diagnostic_fee') AND ${table.amountTiyn} > 0 AND ${table.minAmountTiyn} IS NULL AND ${table.maxAmountTiyn} IS NULL) OR (${table.pricingMode} = 'estimate_range' AND ${table.minAmountTiyn} > 0 AND ${table.maxAmountTiyn} >= ${table.minAmountTiyn} AND ${table.amountTiyn} IS NULL)`
+    ),
   ]
 );
 
