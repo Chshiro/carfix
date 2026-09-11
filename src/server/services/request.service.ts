@@ -1,13 +1,12 @@
 import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { serviceRequests, users, vehicles, orders, providers } from '../../db/schema/index';
+import { serviceRequests, users, vehicles, orders } from '../../db/schema/index';
 import { ServiceCategory } from '../../types';
 import { MatchingService } from './matching.service';
 import { NotFoundError, ValidationError, ForbiddenError } from '../errors';
 import { AuthUser } from '../auth';
 
 export interface CreateRequestInput {
-  customerId: string;
   category: ServiceCategory;
   location: { lat: number; lng: number };
   description?: string;
@@ -19,9 +18,20 @@ export interface CreateRequestResult {
   matchedProvidersCount: number;
 }
 
+interface EligibilityCheckRow extends Record<string, unknown> {
+  eligible: boolean;
+}
+
 export class RequestService {
-  static async createRequest(input: CreateRequestInput): Promise<CreateRequestResult> {
-    const { customerId, category, location, description, vehicleId } = input;
+  /**
+   * Creates a service request. Customer identity is strictly bound to currentUser.id.
+   */
+  static async createRequest(
+    input: CreateRequestInput,
+    currentUser: AuthUser
+  ): Promise<CreateRequestResult> {
+    const customerId = currentUser.id;
+    const { category, location, description, vehicleId } = input;
 
     // Validate customer exists and is not blocked
     const [customer] = await db.select().from(users).where(eq(users.id, customerId));
@@ -49,6 +59,11 @@ export class RequestService {
       location.lng > 180
     ) {
       throw new ValidationError('Invalid latitude or longitude coordinates');
+    }
+
+    // Validate description length
+    if (description && description.length > 1000) {
+      throw new ValidationError('Request description must not exceed 1000 characters');
     }
 
     // Vehicle ownership validation
@@ -81,7 +96,7 @@ export class RequestService {
         category,
         requiredCapabilities,
         vehicleId: vehicleId || null,
-        description: description || null,
+        description: description ? description.trim() : null,
         location: { lat: location.lat, lng: location.lng },
         status: 'PUBLISHED',
         currentRadiusKm: 5,
@@ -104,7 +119,14 @@ export class RequestService {
     };
   }
 
-  static async getRequestById(id: string, currentUser?: AuthUser) {
+  /**
+   * Retrieves a service request by ID enforcing strict authorization and location privacy.
+   */
+  static async getRequestById(id: string, currentUser: AuthUser) {
+    if (currentUser.isBlocked) {
+      throw new ForbiddenError('User account is blocked');
+    }
+
     const [request] = await db
       .select()
       .from(serviceRequests)
@@ -112,10 +134,6 @@ export class RequestService {
 
     if (!request) {
       throw new NotFoundError('Service request not found');
-    }
-
-    if (!currentUser) {
-      return request;
     }
 
     const isAdmin = currentUser.roles.includes('admin');
@@ -152,7 +170,7 @@ export class RequestService {
       const capSqlElements = request.requiredCapabilities.map((cap) => sql`${cap}`);
       const capArraySql = sql`ARRAY[${sql.join(capSqlElements, sql`, `)}]`;
 
-      const eligibilityCheck = await db.execute<{ eligible: boolean }>(sql`
+      const eligibilityCheck = await db.execute<EligibilityCheckRow>(sql`
         SELECT EXISTS (
           SELECT 1
           FROM providers p
@@ -171,7 +189,8 @@ export class RequestService {
         ) AS eligible
       `);
 
-      const isEligible = (eligibilityCheck as unknown as Array<{ eligible: boolean }>)[0]?.eligible;
+      const rows = eligibilityCheck as unknown as EligibilityCheckRow[];
+      const isEligible = Boolean(rows[0]?.eligible);
 
       if (!isEligible) {
         throw new ForbiddenError('Access denied: You are not an eligible provider for this request');

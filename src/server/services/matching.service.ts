@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { ServiceCategory } from '../../types';
+import { ValidationError } from '../errors';
 
 export interface MatchedProvider {
   providerId: string;
@@ -54,6 +55,19 @@ export class MatchingService {
     requiredCapabilities: string[],
     radiusKm: number = 5
   ): Promise<MatchedProvider[]> {
+    if (
+      typeof location.lat !== 'number' ||
+      typeof location.lng !== 'number' ||
+      !Number.isFinite(location.lat) ||
+      !Number.isFinite(location.lng) ||
+      location.lat < -90 ||
+      location.lat > 90 ||
+      location.lng < -180 ||
+      location.lng > 180
+    ) {
+      throw new ValidationError('Invalid latitude or longitude coordinates');
+    }
+
     const radiusMeters = radiusKm * 1000;
     const pointWkt = `SRID=4326;POINT(${location.lng} ${location.lat})`;
 

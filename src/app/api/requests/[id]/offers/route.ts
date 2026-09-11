@@ -24,16 +24,18 @@ export async function GET(
           error: {
             code: err.code,
             message: err.message,
+            details: err.details,
           },
         },
         { status: err.statusCode }
       );
     }
+    console.error('Get offers error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: err instanceof Error ? err.message : 'Internal server error',
+          message: 'Internal server error',
         },
       },
       { status: 500 }

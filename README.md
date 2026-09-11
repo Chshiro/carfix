@@ -1,6 +1,6 @@
 # CarFix — On-Demand Automotive Assistance Marketplace
 **Target Market:** Astana, Kazakhstan (Pilot: Esil & Almaty Districts)  
-**Status:** `Pre-MVP — Product & Architecture Defined` | `Supply Validation In Progress`
+**Status:** `Slice 1: Hardened & Verified` | `Ready for Slice 2`
 
 ---
 
@@ -12,42 +12,42 @@ Instead of calling dozens of repair shops in directories (2GIS/OLX) or posting i
 
 ---
 
-## Canonical Tech Stack
+## Tech Stack
 
-- **Application Architecture:** Single Next.js Application (App Router, API Route Handlers, Modular Domain Services, Mobile-First PWA)
+- **Application Architecture:** Next.js Application (App Router, API Route Handlers, Modular Monolith Domain Services)
 - **Language:** TypeScript (`strict` mode)
 - **Database:** PostgreSQL 16 with **PostGIS** extension (`geography(Point, 4326)`)
 - **Data Access:** Drizzle ORM (`drizzle-orm`, `drizzle-kit`)
-- **Real-Time Client Updates:** Server-Sent Events (SSE) with REST state synchronization
-- **Provider Dispatch & Bidding:** Telegram Bot API (@CarFixPartnerBot) with 1-tap inline keyboards
-- **Storage:** S3-compatible object storage (Cloudflare R2 / AWS S3) with pre-signed upload URLs
+- **Testing:** Vitest with PostgreSQL/PostGIS integration test suite
+- **Authentication:** JWT Bearer tokens with server-side authoritative database resolution
 
 ---
 
-## Canonical MVP Categories (Strictly 3)
+## Quick Start & Verification
 
-1. `electrical_starting` — Автоэлектрика и компьютерная диагностика
-2. `battery_jumpstart` — Прикурка аккумулятора (12V/24V) и замена АКБ на месте
-3. `mobile_mechanic` — Мелкий выездной ремонт на дороге
+```bash
+# 1. Start PostgreSQL with PostGIS
+docker compose up -d
 
-*(Шиномонтаж, эвакуаторы и сложный стационарный ремонт запланированы на Post-MVP фазу).*
+# 2. Run automated test environment setup & test suite
+npm run test:fresh
 
----
-
-## Repository Documentation Index
-
-| Document | Purpose |
-|---|---|
-| [DEVELOPMENT_PLAN.md](file:///c:/carfix/DEVELOPMENT_PLAN.md) | Canonical 8-week vertical-slice implementation plan and 22-scenario test matrix |
-| [ARCHITECTURE.md](file:///c:/carfix/ARCHITECTURE.md) | Complete system architecture, domain models, 12-state order machine, Anti-IDOR matrix, and error contracts |
-| [MVP_SCOPE.md](file:///c:/carfix/MVP_SCOPE.md) | Frozen MVP scope boundaries, in-scope/out-of-scope feature list, and launch kill-thresholds |
-| [PRODUCT.md](file:///c:/carfix/PRODUCT.md) | Product context, problem statement, user journeys, and tiyn money representation |
-| [DECISIONS.md](file:///c:/carfix/DECISIONS.md) | Architectural Decision Records (ADR-001 through ADR-015) |
-| [FIX_PLAN.md](file:///c:/carfix/FIX_PLAN.md) | Log of resolved P0 specification inconsistencies and P1/P2 backlog |
-| [IMPLEMENTATION_READINESS.md](file:///c:/carfix/IMPLEMENTATION_READINESS.md) | Final pre-implementation audit and readiness verdict |
+# 3. Full verification (Typecheck, Lint, Tests, Build)
+npm run verify
+```
 
 ---
 
-## Current Status & Next Steps
+## Documentation
 
-All product specifications and architectural decisions are consolidated and frozen. Development begins with **Slice 1: Domain + Transaction Core** (Database schema, PostGIS spatial queries, and automated integration tests).
+All project documentation is consolidated in the [`/docs`](file:///c:/carfix/docs/README.md) directory:
+
+- [Documentation Index](file:///c:/carfix/docs/README.md)
+- [Architecture Documentation](file:///c:/carfix/docs/ARCHITECTURE.md)
+- [Development Plan](file:///c:/carfix/docs/DEVELOPMENT_PLAN.md)
+- [Architectural Decisions (ADR)](file:///c:/carfix/docs/DECISIONS.md)
+- [Product Specifications](file:///c:/carfix/docs/PRODUCT.md)
+- [MVP Scope](file:///c:/carfix/docs/MVP_SCOPE.md)
+- [Manual QA Guide & Scenarios](file:///c:/carfix/docs/MANUAL_QA.md)
+- [Implementation Readiness](file:///c:/carfix/docs/IMPLEMENTATION_READINESS.md)
+- [Security & Trust Audit](file:///c:/carfix/docs/TRUST_SAFETY_AUDIT.md)

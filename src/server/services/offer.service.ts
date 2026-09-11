@@ -27,10 +27,10 @@ export interface CreateOfferInput {
 
 export class OfferService {
   /**
-   * Submits a provider offer for a service request.
+   * Submits a provider offer for a service request under strict transactional locking.
    *
    * Provider identity is strictly bound to currentUser.providerId.
-   * Server-side eligibility is deterministically recomputed before insertion.
+   * Request row is locked with FOR UPDATE, re-validating status, expiration, and eligibility inside the transaction.
    */
   static async createOffer(input: CreateOfferInput, currentUser: AuthUser) {
     const {
@@ -54,11 +54,7 @@ export class OfferService {
 
     const providerId = currentUser.providerId;
 
-    // 2. Comprehensive Server-Side Eligibility Recomputation
-    // "Provider eligibility is recomputed server-side before offer submission."
-    const { request } = await ProviderEligibilityService.assertEligible(providerId, requestId);
-
-    // 3. Strict Pricing Integrity Validation
+    // 2. Strict Pricing Integrity Validation
     if (pricingMode === 'fixed' || pricingMode === 'diagnostic_fee') {
       if (!amountTiyn || amountTiyn <= 0 || !Number.isInteger(amountTiyn)) {
         throw new ValidationError(
@@ -92,68 +88,117 @@ export class OfferService {
       throw new ValidationError(`Invalid pricing mode '${pricingMode}'`);
     }
 
-    // 4. Validate ETA
+    // 3. Validate ETA
     if (!etaMinutes || etaMinutes < 1 || etaMinutes > 480 || !Number.isInteger(etaMinutes)) {
       throw new ValidationError('ETA must be an integer between 1 and 480 minutes');
     }
 
-    // 5. Validate Message length
+    // 4. Validate Message length
     if (message && message.length > 500) {
       throw new ValidationError('Offer message must not exceed 500 characters');
     }
 
-    // 6. Check for Duplicate Offer
-    const [existingOffer] = await db
-      .select()
-      .from(providerOffers)
-      .where(
-        and(
-          eq(providerOffers.requestId, requestId),
-          eq(providerOffers.providerId, providerId)
-        )
-      );
+    // 5. Transactional Offer Creation with Request Row Locking
+    try {
+      return await db.transaction(async (tx) => {
+        // Lock request row FOR UPDATE
+        const [request] = await tx
+          .select()
+          .from(serviceRequests)
+          .where(eq(serviceRequests.id, requestId))
+          .for('update');
 
-    if (existingOffer) {
-      throw new ConflictError('Provider has already submitted an offer for this request');
-    }
+        if (!request) {
+          throw new NotFoundError('Service request not found');
+        }
 
-    // 7. Atomic Insert Offer & Update Request Status if PUBLISHED
-    const now = new Date();
-    return await db.transaction(async (tx) => {
-      const [offer] = await tx
-        .insert(providerOffers)
-        .values({
-          requestId,
-          providerId,
-          pricingMode,
-          amountTiyn: pricingMode !== 'estimate_range' ? amountTiyn : null,
-          minAmountTiyn: pricingMode === 'estimate_range' ? minAmountTiyn : null,
-          maxAmountTiyn: pricingMode === 'estimate_range' ? maxAmountTiyn : null,
-          etaMinutes,
-          message: message ? message.trim() : null,
-          status: 'SUBMITTED',
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
+        // Verify request is in a submittable state
+        if (request.status !== 'PUBLISHED' && request.status !== 'OFFERS_RECEIVED') {
+          throw new ConflictError(
+            `Cannot submit offer: request is in status '${request.status}'`
+          );
+        }
 
-      if (request.status === 'PUBLISHED') {
-        await tx
-          .update(serviceRequests)
-          .set({ status: 'OFFERS_RECEIVED', updatedAt: now })
+        // Verify request expiration under the lock
+        if (new Date(request.expiresAt).getTime() <= Date.now()) {
+          throw new ConflictError('Cannot submit offer: request has expired');
+        }
+
+        // Re-evaluate full provider eligibility inside the transaction context
+        await ProviderEligibilityService.assertEligible(providerId, requestId, tx, request);
+
+        // Preflight duplicate check
+        const [existingOffer] = await tx
+          .select()
+          .from(providerOffers)
           .where(
             and(
-              eq(serviceRequests.id, requestId),
-              eq(serviceRequests.status, 'PUBLISHED')
+              eq(providerOffers.requestId, requestId),
+              eq(providerOffers.providerId, providerId)
             )
           );
-      }
 
-      return offer;
-    });
+        if (existingOffer) {
+          throw new ConflictError('Provider has already submitted an offer for this request');
+        }
+
+        const now = new Date();
+
+        // Insert offer
+        const [offer] = await tx
+          .insert(providerOffers)
+          .values({
+            requestId,
+            providerId,
+            pricingMode,
+            amountTiyn: pricingMode !== 'estimate_range' ? amountTiyn : null,
+            minAmountTiyn: pricingMode === 'estimate_range' ? minAmountTiyn : null,
+            maxAmountTiyn: pricingMode === 'estimate_range' ? maxAmountTiyn : null,
+            etaMinutes,
+            message: message ? message.trim() : null,
+            status: 'SUBMITTED',
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+
+        // If request was PUBLISHED, transition to OFFERS_RECEIVED
+        if (request.status === 'PUBLISHED') {
+          await tx
+            .update(serviceRequests)
+            .set({ status: 'OFFERS_RECEIVED', updatedAt: now })
+            .where(
+              and(
+                eq(serviceRequests.id, requestId),
+                eq(serviceRequests.status, 'PUBLISHED')
+              )
+            );
+        }
+
+        return offer;
+      });
+    } catch (err: unknown) {
+      // Catch DB unique constraint violation (code 23505) as a clean ConflictError
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === '23505'
+      ) {
+        throw new ConflictError('Provider has already submitted an offer for this request');
+      }
+      throw err;
+    }
   }
 
+  /**
+   * Retrieves offers for a request with SQL-level isolation.
+   */
   static async getOffersForRequest(requestId: string, currentUser: AuthUser) {
+    if (currentUser.isBlocked) {
+      throw new ForbiddenError('User account is blocked');
+    }
+
     const [request] = await db
       .select()
       .from(serviceRequests)
@@ -171,7 +216,15 @@ export class OfferService {
       throw new ForbiddenError('You do not have permission to view offers for this request');
     }
 
-    // Fetch offers joined with provider details
+    // SQL-level query isolation: providers only query their own offer
+    const whereCondition =
+      isProvider && !isCustomerOwner && !isAdmin
+        ? and(
+            eq(providerOffers.requestId, requestId),
+            eq(providerOffers.providerId, currentUser.providerId!)
+          )
+        : eq(providerOffers.requestId, requestId);
+
     const offersWithProviders = await db
       .select({
         id: providerOffers.id,
@@ -193,18 +246,7 @@ export class OfferService {
       })
       .from(providerOffers)
       .innerJoin(providers, eq(providers.id, providerOffers.providerId))
-      .where(eq(providerOffers.requestId, requestId));
-
-    // If caller is a provider (and not customer owner/admin), return ONLY their own offer
-    if (isProvider && !isCustomerOwner && !isAdmin) {
-      const ownOffers = offersWithProviders.filter(
-        (o) => o.providerId === currentUser.providerId
-      );
-      return ownOffers.map((o) => ({
-        ...o,
-        rating: Number(o.rating) / 100,
-      }));
-    }
+      .where(whereCondition);
 
     return offersWithProviders.map((o) => ({
       ...o,

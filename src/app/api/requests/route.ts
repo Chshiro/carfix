@@ -22,13 +22,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const validated = createRequestSchema.parse(body);
 
-    const result = await RequestService.createRequest({
-      customerId: currentUser.id,
-      category: validated.category,
-      location: validated.location,
-      description: validated.description,
-      vehicleId: validated.vehicleId,
-    });
+    const result = await RequestService.createRequest(
+      {
+        category: validated.category,
+        location: validated.location,
+        description: validated.description,
+        vehicleId: validated.vehicleId,
+      },
+      currentUser
+    );
 
     return NextResponse.json(
       {
@@ -69,11 +71,12 @@ export async function POST(req: NextRequest) {
         { status: err.statusCode }
       );
     }
+    console.error('Request creation error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: err instanceof Error ? err.message : 'Internal server error',
+          message: 'Internal server error',
         },
       },
       { status: 500 }

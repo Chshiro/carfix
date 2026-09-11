@@ -11,9 +11,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:setup": "drizzle-kit migrate && tsx src/db/seed.ts",
+    "test:fresh": "drizzle-kit migrate && tsx src/db/seed.ts && vitest run",
+    "verify": "tsc --noEmit && next lint && vitest run && next build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
+    "db:seed": "tsx src/db/seed.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
@@ -35,6 +39,7 @@
     "drizzle-kit": "^0.30.4",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.24",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^2.1.8"

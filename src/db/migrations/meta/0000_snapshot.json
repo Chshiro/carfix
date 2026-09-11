@@ -1,5 +1,5 @@
 {
-  "id": "0bcd8a02-32e3-4332-8b75-efd340c1bcd2",
+  "id": "18e5ae12-768b-4d76-b5ac-f25f6e0f3f36",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -245,8 +245,8 @@
           "method": "btree",
           "with": {}
         },
-        "idx_orders_request": {
-          "name": "idx_orders_request",
+        "uq_orders_request": {
+          "name": "uq_orders_request",
           "columns": [
             {
               "expression": "request_id",
@@ -255,7 +255,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -360,7 +360,7 @@
         },
         "location": {
           "name": "location",
-          "type": "geography",
+          "type": "geography(Point, 4326)",
           "primaryKey": false,
           "notNull": true
         },
@@ -442,7 +442,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_provider_availability_radius": {
+          "name": "chk_provider_availability_radius",
+          "value": "\"provider_availability\".\"radius_km\" >= 1 AND \"provider_availability\".\"radius_km\" <= 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.provider_capabilities": {
@@ -682,7 +687,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_provider_offers_eta": {
+          "name": "chk_provider_offers_eta",
+          "value": "\"provider_offers\".\"eta_minutes\" >= 1 AND \"provider_offers\".\"eta_minutes\" <= 480"
+        },
+        "chk_provider_offers_pricing": {
+          "name": "chk_provider_offers_pricing",
+          "value": "(\"provider_offers\".\"pricing_mode\" IN ('fixed', 'diagnostic_fee') AND \"provider_offers\".\"amount_tiyn\" > 0 AND \"provider_offers\".\"min_amount_tiyn\" IS NULL AND \"provider_offers\".\"max_amount_tiyn\" IS NULL) OR (\"provider_offers\".\"pricing_mode\" = 'estimate_range' AND \"provider_offers\".\"min_amount_tiyn\" > 0 AND \"provider_offers\".\"max_amount_tiyn\" >= \"provider_offers\".\"min_amount_tiyn\" AND \"provider_offers\".\"amount_tiyn\" IS NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.provider_service_modes": {
@@ -828,7 +842,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_providers_rating": {
+          "name": "chk_providers_rating",
+          "value": "\"providers\".\"rating\" >= 0 AND \"providers\".\"rating\" <= 500"
+        },
+        "chk_providers_completed_jobs": {
+          "name": "chk_providers_completed_jobs",
+          "value": "\"providers\".\"completed_jobs\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.reviews": {
@@ -1008,7 +1031,7 @@
         },
         "location": {
           "name": "location",
-          "type": "geography",
+          "type": "geography(Point, 4326)",
           "primaryKey": false,
           "notNull": true
         },
@@ -1150,7 +1173,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_service_requests_radius": {
+          "name": "chk_service_requests_radius",
+          "value": "\"service_requests\".\"current_radius_km\" >= 1 AND \"service_requests\".\"current_radius_km\" <= 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.users": {
@@ -1282,7 +1310,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "chk_vehicles_year": {
+          "name": "chk_vehicles_year",
+          "value": "\"vehicles\".\"year\" >= 1950 AND \"vehicles\".\"year\" <= 2100"
+        }
+      },
       "isRLSEnabled": false
     }
   },

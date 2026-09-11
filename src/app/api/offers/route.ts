@@ -67,11 +67,12 @@ export async function POST(req: NextRequest) {
         { status: err.statusCode }
       );
     }
+    console.error('Create offer error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: err instanceof Error ? err.message : 'Internal server error',
+          message: 'Internal server error',
         },
       },
       { status: 500 }

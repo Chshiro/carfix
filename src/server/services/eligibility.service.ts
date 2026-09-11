@@ -10,11 +10,19 @@ import {
 } from '../../db/schema/index';
 import { ForbiddenError, NotFoundError, ConflictError } from '../errors';
 
+export type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+interface SpatialCheckRow extends Record<string, unknown> {
+  is_online: boolean;
+  location_fresh: boolean;
+  distance_meters: number;
+  within_radius: boolean;
+}
+
 export class ProviderEligibilityService {
   /**
    * Deterministically verifies whether a provider is eligible to submit an offer for a service request.
-   *
-   * "Provider eligibility is recomputed server-side before offer submission."
+   * Operates within a provided transaction context (or default db client).
    *
    * Checks performed:
    * 1. Provider exists and user is not blocked
@@ -26,13 +34,18 @@ export class ProviderEligibilityService {
    * 7. Provider location is fresh (updated within the last 4 hours)
    * 8. Provider is within the current matching radius (ST_DWithin)
    */
-  static async assertEligible(providerId: string, requestId: string): Promise<{
+  static async assertEligible(
+    providerId: string,
+    requestId: string,
+    executor: DbExecutor = db,
+    preloadedRequest?: typeof serviceRequests.$inferSelect
+  ): Promise<{
     provider: typeof providers.$inferSelect;
     request: typeof serviceRequests.$inferSelect;
     distanceMeters: number;
   }> {
     // 1. Verify Provider exists and is not blocked
-    const [provider] = await db
+    const [provider] = await executor
       .select()
       .from(providers)
       .where(eq(providers.id, providerId));
@@ -41,7 +54,7 @@ export class ProviderEligibilityService {
       throw new NotFoundError('Provider profile not found');
     }
 
-    const [providerUser] = await db
+    const [providerUser] = await executor
       .select()
       .from(users)
       .where(eq(users.id, provider.userId));
@@ -51,10 +64,14 @@ export class ProviderEligibilityService {
     }
 
     // 2. Verify Request exists and is submittable
-    const [request] = await db
-      .select()
-      .from(serviceRequests)
-      .where(eq(serviceRequests.id, requestId));
+    let request = preloadedRequest;
+    if (!request) {
+      const [fetched] = await executor
+        .select()
+        .from(serviceRequests)
+        .where(eq(serviceRequests.id, requestId));
+      request = fetched;
+    }
 
     if (!request) {
       throw new NotFoundError('Service request not found');
@@ -72,7 +89,7 @@ export class ProviderEligibilityService {
     }
 
     // 4. Verify Provider supports MOBILE service mode
-    const [mobileMode] = await db
+    const [mobileMode] = await executor
       .select()
       .from(providerServiceModes)
       .where(
@@ -87,7 +104,7 @@ export class ProviderEligibilityService {
     }
 
     // 5. Verify Capability match (OR semantics)
-    const capabilities = await db
+    const capabilities = await executor
       .select()
       .from(providerCapabilities)
       .where(
@@ -97,8 +114,8 @@ export class ProviderEligibilityService {
         )
       );
 
-    const hasMatchingCapability = capabilities.some((c) =>
-      request.requiredCapabilities.includes(c.capability)
+    const hasMatchingCapability = capabilities.some((c: typeof providerCapabilities.$inferSelect) =>
+      request!.requiredCapabilities.includes(c.capability)
     );
 
     if (!hasMatchingCapability) {
@@ -111,12 +128,7 @@ export class ProviderEligibilityService {
     const radiusMeters = request.currentRadiusKm * 1000;
     const pointWkt = `SRID=4326;POINT(${request.location.lng} ${request.location.lat})`;
 
-    const spatialCheck = await db.execute<{
-      is_online: boolean;
-      location_fresh: boolean;
-      distance_meters: number;
-      within_radius: boolean;
-    }>(sql`
+    const spatialCheck = await executor.execute(sql`
       SELECT 
         pa.is_online,
         (pa.location_updated_at >= NOW() - INTERVAL '4 hours') AS location_fresh,
@@ -126,12 +138,8 @@ export class ProviderEligibilityService {
       WHERE pa.provider_id = ${providerId}
     `);
 
-    const availability = (spatialCheck as unknown as Array<{
-      is_online: boolean;
-      location_fresh: boolean;
-      distance_meters: number;
-      within_radius: boolean;
-    }>)[0];
+    const rows = spatialCheck as unknown as SpatialCheckRow[];
+    const availability = rows[0];
 
     if (!availability) {
       throw new ForbiddenError('Provider availability/location not configured');

@@ -61,22 +61,29 @@ export const users = pgTable('users', {
 });
 
 // Provider profiles table
-export const providers = pgTable('providers', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  businessName: varchar('business_name', { length: 150 }).notNull(),
-  providerType: varchar('provider_type', { length: 50 }).notNull(), // STO | INDEPENDENT_MASTER | MOBILE_MASTER
-  verificationLevel: varchar('verification_level', { length: 50 })
-    .default('LEVEL_3_NEW_PROVIDER')
-    .notNull(),
-  description: text('description'),
-  rating: integer('rating').default(0).notNull(), // Stored as aggregate * 100
-  completedJobs: integer('completed_jobs').default(0).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const providers = pgTable(
+  'providers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    businessName: varchar('business_name', { length: 150 }).notNull(),
+    providerType: varchar('provider_type', { length: 50 }).notNull(), // STO | INDEPENDENT_MASTER | MOBILE_MASTER
+    verificationLevel: varchar('verification_level', { length: 50 })
+      .default('LEVEL_3_NEW_PROVIDER')
+      .notNull(),
+    description: text('description'),
+    rating: integer('rating').default(0).notNull(), // Stored as aggregate * 100
+    completedJobs: integer('completed_jobs').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check('chk_providers_rating', sql`${table.rating} >= 0 AND ${table.rating} <= 500`),
+    check('chk_providers_completed_jobs', sql`${table.completedJobs} >= 0`),
+  ]
+);
 
 // Provider capabilities table
 export const providerCapabilities = pgTable('provider_capabilities', {
@@ -108,6 +115,7 @@ export const providerAvailability = pgTable(
   },
   (table) => [
     index('idx_provider_availability_location').using('gist', table.location),
+    check('chk_provider_availability_radius', sql`${table.radiusKm} >= 1 AND ${table.radiusKm} <= 100`),
   ]
 );
 
@@ -122,17 +130,23 @@ export const providerServiceModes = pgTable('provider_service_modes', {
 });
 
 // Vehicles table (optional)
-export const vehicles = pgTable('vehicles', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  make: varchar('make', { length: 100 }).notNull(),
-  model: varchar('model', { length: 100 }).notNull(),
-  year: integer('year').notNull(),
-  licensePlate: varchar('license_plate', { length: 20 }),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const vehicles = pgTable(
+  'vehicles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    make: varchar('make', { length: 100 }).notNull(),
+    model: varchar('model', { length: 100 }).notNull(),
+    year: integer('year').notNull(),
+    licensePlate: varchar('license_plate', { length: 20 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check('chk_vehicles_year', sql`${table.year} >= 1950 AND ${table.year} <= 2100`),
+  ]
+);
 
 // Service requests table
 export const serviceRequests = pgTable(
@@ -162,6 +176,7 @@ export const serviceRequests = pgTable(
     index('idx_service_requests_location').using('gist', table.location),
     index('idx_service_requests_status_category').on(table.status, table.category),
     index('idx_service_requests_customer_created').on(table.customerId, table.createdAt),
+    check('chk_service_requests_radius', sql`${table.currentRadiusKm} >= 1 AND ${table.currentRadiusKm} <= 100`),
   ]
 );
 
@@ -196,7 +211,7 @@ export const providerOffers = pgTable(
     ),
     check(
       'chk_provider_offers_pricing',
-      sql`(${table.pricingMode} IN ('fixed', 'diagnostic_fee') AND ${table.amountTiyn} > 0 AND ${table.minAmountTiyn} IS NULL AND ${table.maxAmountTiyn} IS NULL) OR (${table.pricingMode} = 'estimate_range' AND ${table.minAmountTiyn} > 0 AND ${table.maxAmountTiyn} >= ${table.minAmountTiyn} AND ${table.amountTiyn} IS NULL)`
+      sql`(${table.pricingMode} IN ('fixed', 'diagnostic_fee') AND ${table.amountTiyn} IS NOT NULL AND ${table.amountTiyn} > 0 AND ${table.minAmountTiyn} IS NULL AND ${table.maxAmountTiyn} IS NULL) OR (${table.pricingMode} = 'estimate_range' AND ${table.minAmountTiyn} IS NOT NULL AND ${table.minAmountTiyn} > 0 AND ${table.maxAmountTiyn} IS NOT NULL AND ${table.maxAmountTiyn} >= ${table.minAmountTiyn} AND ${table.amountTiyn} IS NULL)`
     ),
   ]
 );
@@ -232,7 +247,7 @@ export const orders = pgTable(
   (table) => [
     index('idx_orders_customer').on(table.customerId, table.createdAt),
     index('idx_orders_provider').on(table.providerId, table.createdAt),
-    index('idx_orders_request').on(table.requestId),
+    uniqueIndex('uq_orders_request').on(table.requestId),
   ]
 );
 

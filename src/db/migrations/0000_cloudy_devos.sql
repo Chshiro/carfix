@@ -33,13 +33,14 @@ CREATE TABLE "provider_availability" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"provider_id" uuid NOT NULL,
 	"is_online" boolean DEFAULT false NOT NULL,
-	"location" "geography" NOT NULL,
+	"location" geography(Point, 4326) NOT NULL,
 	"radius_km" integer DEFAULT 10 NOT NULL,
 	"location_updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"auto_offline_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "provider_availability_provider_id_unique" UNIQUE("provider_id")
+	CONSTRAINT "provider_availability_provider_id_unique" UNIQUE("provider_id"),
+	CONSTRAINT "chk_provider_availability_radius" CHECK ("provider_availability"."radius_km" >= 1 AND "provider_availability"."radius_km" <= 100)
 );
 --> statement-breakpoint
 CREATE TABLE "provider_capabilities" (
@@ -62,7 +63,9 @@ CREATE TABLE "provider_offers" (
 	"message" text,
 	"status" varchar(50) DEFAULT 'SUBMITTED' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "chk_provider_offers_eta" CHECK ("provider_offers"."eta_minutes" >= 1 AND "provider_offers"."eta_minutes" <= 480),
+	CONSTRAINT "chk_provider_offers_pricing" CHECK (("provider_offers"."pricing_mode" IN ('fixed', 'diagnostic_fee') AND "provider_offers"."amount_tiyn" IS NOT NULL AND "provider_offers"."amount_tiyn" > 0 AND "provider_offers"."min_amount_tiyn" IS NULL AND "provider_offers"."max_amount_tiyn" IS NULL) OR ("provider_offers"."pricing_mode" = 'estimate_range' AND "provider_offers"."min_amount_tiyn" IS NOT NULL AND "provider_offers"."min_amount_tiyn" > 0 AND "provider_offers"."max_amount_tiyn" IS NOT NULL AND "provider_offers"."max_amount_tiyn" >= "provider_offers"."min_amount_tiyn" AND "provider_offers"."amount_tiyn" IS NULL))
 );
 --> statement-breakpoint
 CREATE TABLE "provider_service_modes" (
@@ -82,7 +85,9 @@ CREATE TABLE "providers" (
 	"rating" integer DEFAULT 0 NOT NULL,
 	"completed_jobs" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "chk_providers_rating" CHECK ("providers"."rating" >= 0 AND "providers"."rating" <= 500),
+	CONSTRAINT "chk_providers_completed_jobs" CHECK ("providers"."completed_jobs" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "reviews" (
@@ -102,14 +107,15 @@ CREATE TABLE "service_requests" (
 	"required_capabilities" text[] NOT NULL,
 	"vehicle_id" uuid,
 	"description" text,
-	"location" "geography" NOT NULL,
+	"location" geography(Point, 4326) NOT NULL,
 	"status" varchar(50) DEFAULT 'PUBLISHED' NOT NULL,
 	"current_radius_km" integer DEFAULT 5 NOT NULL,
 	"published_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"next_expansion_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "chk_service_requests_radius" CHECK ("service_requests"."current_radius_km" >= 1 AND "service_requests"."current_radius_km" <= 100)
 );
 --> statement-breakpoint
 CREATE TABLE "users" (
@@ -129,7 +135,8 @@ CREATE TABLE "vehicles" (
 	"model" varchar(100) NOT NULL,
 	"year" integer NOT NULL,
 	"license_plate" varchar(20),
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "chk_vehicles_year" CHECK ("vehicles"."year" >= 1950 AND "vehicles"."year" <= 2100)
 );
 --> statement-breakpoint
 ALTER TABLE "order_status_history" ADD CONSTRAINT "order_status_history_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -153,7 +160,7 @@ ALTER TABLE "vehicles" ADD CONSTRAINT "vehicles_user_id_users_id_fk" FOREIGN KEY
 CREATE INDEX "idx_order_status_history_order" ON "order_status_history" USING btree ("order_id","created_at");--> statement-breakpoint
 CREATE INDEX "idx_orders_customer" ON "orders" USING btree ("customer_id","created_at");--> statement-breakpoint
 CREATE INDEX "idx_orders_provider" ON "orders" USING btree ("provider_id","created_at");--> statement-breakpoint
-CREATE INDEX "idx_orders_request" ON "orders" USING btree ("request_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_orders_request" ON "orders" USING btree ("request_id");--> statement-breakpoint
 CREATE INDEX "idx_provider_availability_location" ON "provider_availability" USING gist ("location");--> statement-breakpoint
 CREATE UNIQUE INDEX "uq_provider_offers_request_provider" ON "provider_offers" USING btree ("request_id","provider_id");--> statement-breakpoint
 CREATE INDEX "idx_provider_offers_request_status" ON "provider_offers" USING btree ("request_id","status");--> statement-breakpoint
@@ -162,6 +169,4 @@ CREATE UNIQUE INDEX "uq_reviews_order_from_user" ON "reviews" USING btree ("orde
 CREATE INDEX "idx_reviews_to_user" ON "reviews" USING btree ("to_user_id");--> statement-breakpoint
 CREATE INDEX "idx_service_requests_location" ON "service_requests" USING gist ("location");--> statement-breakpoint
 CREATE INDEX "idx_service_requests_status_category" ON "service_requests" USING btree ("status","category");--> statement-breakpoint
-CREATE INDEX "idx_service_requests_customer_created" ON "service_requests" USING btree ("customer_id","created_at");--> statement-breakpoint
-ALTER TABLE "provider_offers" ADD CONSTRAINT "chk_provider_offers_eta" CHECK ("eta_minutes" >= 1 AND "eta_minutes" <= 480);--> statement-breakpoint
-ALTER TABLE "provider_offers" ADD CONSTRAINT "chk_provider_offers_pricing" CHECK (("pricing_mode" IN ('fixed', 'diagnostic_fee') AND "amount_tiyn" > 0 AND "min_amount_tiyn" IS NULL AND "max_amount_tiyn" IS NULL) OR ("pricing_mode" = 'estimate_range' AND "min_amount_tiyn" > 0 AND "max_amount_tiyn" >= "min_amount_tiyn" AND "amount_tiyn" IS NULL));
+CREATE INDEX "idx_service_requests_customer_created" ON "service_requests" USING btree ("customer_id","created_at");

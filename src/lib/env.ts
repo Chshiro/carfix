@@ -18,7 +18,7 @@ const envSchema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_BUCKET: z.string().default('carfix-uploads'),
   S3_REGION: z.string().default('auto'),
-  DEMO_MODE: z.string().optional().default('true'),
+  DEMO_MODE: z.string().optional().default('false'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -38,7 +38,7 @@ function validateEnv(): Env {
         SMS_PROVIDER: 'mock',
         S3_BUCKET: 'carfix-uploads',
         S3_REGION: 'auto',
-        DEMO_MODE: 'true',
+        DEMO_MODE: 'false',
       };
     }
     throw new Error(`❌ Invalid environment configuration:\n${errorDetails}`);

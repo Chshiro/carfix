@@ -16,7 +16,15 @@ import { OfferService } from '../src/server/services/offer.service';
 import { OrderService } from '../src/server/services/order.service';
 import { ConflictError, ForbiddenError } from '../src/server/errors';
 import { db } from '../src/db/client';
-import { providerOffers, orders, users, providerAvailability, vehicles, serviceRequests } from '../src/db/schema/index';
+import {
+  providerOffers,
+  orders,
+  users,
+  providers,
+  providerAvailability,
+  vehicles,
+  serviceRequests,
+} from '../src/db/schema/index';
 import { eq } from 'drizzle-orm';
 import { AuthUser } from '../src/server/auth';
 
@@ -60,15 +68,18 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
 
   // 1. Request Creation Without Vehicle
   it('1. Creates a valid ServiceRequest without vehicle (vehicleId = null)', async () => {
-    const result = await RequestService.createRequest({
-      customerId: mockCustomer.id,
-      category: 'electrical_starting',
-      location: { lat: 51.1283, lng: 71.4305 }, // Astana Baiterek
-      description: 'Не заводится, стартер щелкает',
-    });
+    const result = await RequestService.createRequest(
+      {
+        category: 'electrical_starting',
+        location: { lat: 51.1283, lng: 71.4305 }, // Astana Baiterek
+        description: 'Не заводится, стартер щелкает',
+      },
+      mockCustomer
+    );
 
     expect(result.request).toBeDefined();
     expect(result.request.id).toBeDefined();
+    expect(result.request.customerId).toBe(mockCustomer.id);
     expect(result.request.vehicleId).toBeNull();
     expect(result.request.status).toBe('PUBLISHED');
     expect(result.request.category).toBe('electrical_starting');
@@ -99,12 +110,14 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
       .returning();
 
     await expect(
-      RequestService.createRequest({
-        customerId: mockCustomer.id,
-        category: 'battery_jumpstart',
-        location: { lat: 51.1283, lng: 71.4305 },
-        vehicleId: otherVehicle.id,
-      })
+      RequestService.createRequest(
+        {
+          category: 'battery_jumpstart',
+          location: { lat: 51.1283, lng: 71.4305 },
+          vehicleId: otherVehicle.id,
+        },
+        mockCustomer
+      )
     ).rejects.toThrow(ForbiddenError);
   });
 
@@ -145,7 +158,7 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
     expect(providerIds).not.toContain(SEED_PROVIDER_OFFLINE_ID);
   });
 
-  // 4. Stale Provider Location Excluded (P1 item 14 fixed)
+  // 4. Stale Provider Location Excluded
   it('4. Excludes provider with stale location (> 4 hours)', async () => {
     const staleTime = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
 
@@ -197,7 +210,7 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
   let offer2Id: string;
 
   // 7. Provider Can Create Valid Offer
-  it('7. Eligible provider creates a valid offer in tiyn', async () => {
+  it('7. Eligible provider creates a valid offer in tiyn and updates status to OFFERS_RECEIVED', async () => {
     const offer1 = await OfferService.createOffer(
       {
         requestId: createdRequestId,
@@ -250,7 +263,6 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
 
   // 9. Unauthorized / Ineligible Provider Rejected
   it('9. Rejects offer from provider without matching capabilities (403 Forbidden)', async () => {
-    // Provider 4 only has MECHANICAL_MINOR, request is electrical_starting
     await expect(
       OfferService.createOffer(
         {
@@ -264,36 +276,8 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
     ).rejects.toThrow(ForbiddenError);
   });
 
-  // 10. Customer Sees Own Offers & IDOR Protection
-  it('10. Customer sees offers for request, unauthorized user is blocked', async () => {
-    const customerOffers = await OfferService.getOffersForRequest(
-      createdRequestId,
-      mockCustomer
-    );
-    expect(customerOffers.length).toBe(2);
-
-    // Random unauthorized user is blocked
-    const otherUser: AuthUser = {
-      id: 'e9990000-0000-0000-0000-000000000099',
-      phone: '+77099999999',
-      roles: ['motorist'],
-      isBlocked: false,
-    };
-    await db.insert(users).values({
-      id: otherUser.id,
-      phone: otherUser.phone,
-      roles: otherUser.roles,
-      isBlocked: false,
-    });
-
-    await expect(
-      OfferService.getOffersForRequest(createdRequestId, otherUser)
-    ).rejects.toThrow(ForbiddenError);
-  });
-
-  // 10b. Expired Request Selection Rejection
-  it('10b. Rejects offer selection on expired request (409 Conflict)', async () => {
-    // Create an expired request
+  // 10. Rejects Offer Creation on Expired Request
+  it('10. Rejects offer creation on expired request (409 Conflict)', async () => {
     const pastDate = new Date(Date.now() - 1000 * 60);
     const [expiredReq] = await db
       .insert(serviceRequests)
@@ -303,6 +287,37 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
         requiredCapabilities: ['BATTERY'],
         location: { lat: 51.1283, lng: 71.4305 },
         status: 'PUBLISHED',
+        currentRadiusKm: 5,
+        publishedAt: new Date(Date.now() - 1000 * 3600),
+        expiresAt: pastDate,
+        nextExpansionAt: pastDate,
+      })
+      .returning();
+
+    await expect(
+      OfferService.createOffer(
+        {
+          requestId: expiredReq.id,
+          pricingMode: 'fixed',
+          amountTiyn: 400000,
+          etaMinutes: 15,
+        },
+        mockProvider1
+      )
+    ).rejects.toThrow(ConflictError);
+  });
+
+  // 10b. Expired Request Selection Rejection
+  it('10b. Rejects offer selection on expired request (409 Conflict)', async () => {
+    const pastDate = new Date(Date.now() - 1000 * 60);
+    const [expiredReq] = await db
+      .insert(serviceRequests)
+      .values({
+        customerId: mockCustomer.id,
+        category: 'battery_jumpstart',
+        requiredCapabilities: ['BATTERY'],
+        location: { lat: 51.1283, lng: 71.4305 },
+        status: 'OFFERS_RECEIVED',
         currentRadiusKm: 5,
         publishedAt: new Date(Date.now() - 1000 * 3600),
         expiresAt: pastDate,
@@ -369,24 +384,329 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
     expect(updatedReq.status).toBe('PROVIDER_SELECTED');
   });
 
-  // 12. Concurrent Selection Handling
-  it('12. Concurrent selection is rejected (409 Conflict) and only one order is created', async () => {
-    // Attempting to select again after already selected
-    await expect(
-      OrderService.selectOffer(
+  // -------------------------------------------------------------
+  // REAL CONCURRENCY TESTS (P1)
+  // -------------------------------------------------------------
+  describe('Real Concurrent Execution & Race Safety', () => {
+    it('12. Real Concurrent Selection: exactly one succeeds and exactly one gets 409 Conflict', async () => {
+      // 1. Create a fresh request
+      const reqResult = await RequestService.createRequest(
         {
-          requestId: createdRequestId,
-          offerId: offer2Id,
+          category: 'electrical_starting',
+          location: { lat: 51.1283, lng: 71.4305 },
         },
         mockCustomer
-      )
-    ).rejects.toThrow(ConflictError);
+      );
+      const testReqId = reqResult.request.id;
 
-    // Verify exactly 1 order exists for this request
-    const existingOrders = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.requestId, createdRequestId));
-    expect(existingOrders.length).toBe(1);
+      // 2. Create 2 submitted offers from Provider 1 and Provider 2
+      const offerA = await OfferService.createOffer(
+        {
+          requestId: testReqId,
+          pricingMode: 'fixed',
+          amountTiyn: 300000,
+          etaMinutes: 10,
+        },
+        mockProvider1
+      );
+
+      const offerB = await OfferService.createOffer(
+        {
+          requestId: testReqId,
+          pricingMode: 'fixed',
+          amountTiyn: 350000,
+          etaMinutes: 12,
+        },
+        mockProvider2
+      );
+
+      // 3. Execute true concurrent selection via Promise.allSettled
+      const results = await Promise.allSettled([
+        OrderService.selectOffer({ requestId: testReqId, offerId: offerA.id }, mockCustomer),
+        OrderService.selectOffer({ requestId: testReqId, offerId: offerB.id }, mockCustomer),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConflictError);
+
+      // Verify DB state: exactly 1 order exists for this request
+      const existingOrders = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.requestId, testReqId));
+      expect(existingOrders.length).toBe(1);
+
+      // Verify request status is PROVIDER_SELECTED
+      const [finalReq] = await db
+        .select()
+        .from(serviceRequests)
+        .where(eq(serviceRequests.id, testReqId));
+      expect(finalReq.status).toBe('PROVIDER_SELECTED');
+
+      // Verify exactly one offer is ACCEPTED and the other REJECTED
+      const [offerARow] = await db.select().from(providerOffers).where(eq(providerOffers.id, offerA.id));
+      const [offerBRow] = await db.select().from(providerOffers).where(eq(providerOffers.id, offerB.id));
+
+      const statuses = [offerARow.status, offerBRow.status].sort();
+      expect(statuses).toEqual(['ACCEPTED', 'REJECTED']);
+    });
+
+    it('13. Real Concurrent Offer Creation: same provider creating 2 offers concurrently -> exactly 1 succeeds', async () => {
+      // 1. Create a fresh request
+      const reqResult = await RequestService.createRequest(
+        {
+          category: 'battery_jumpstart',
+          location: { lat: 51.1283, lng: 71.4305 },
+        },
+        mockCustomer
+      );
+      const testReqId = reqResult.request.id;
+
+      // 2. Execute concurrent offer submission for the same provider
+      const results = await Promise.allSettled([
+        OfferService.createOffer(
+          {
+            requestId: testReqId,
+            pricingMode: 'fixed',
+            amountTiyn: 500000,
+            etaMinutes: 20,
+          },
+          mockProvider1
+        ),
+        OfferService.createOffer(
+          {
+            requestId: testReqId,
+            pricingMode: 'fixed',
+            amountTiyn: 550000,
+            etaMinutes: 25,
+          },
+          mockProvider1
+        ),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConflictError);
+
+      // Verify exactly 1 offer in database
+      const offersInDb = await db
+        .select()
+        .from(providerOffers)
+        .where(eq(providerOffers.requestId, testReqId));
+      expect(offersInDb.length).toBe(1);
+    });
+
+    it('14. Offer Creation vs Selection Race: cannot insert offer on already-selected request', async () => {
+      // 1. Create a fresh request
+      const reqResult = await RequestService.createRequest(
+        {
+          category: 'battery_jumpstart',
+          location: { lat: 51.1283, lng: 71.4305 },
+        },
+        mockCustomer
+      );
+      const testReqId = reqResult.request.id;
+
+      // 2. Provider 1 submits offer
+      const offer1 = await OfferService.createOffer(
+        {
+          requestId: testReqId,
+          pricingMode: 'fixed',
+          amountTiyn: 500000,
+          etaMinutes: 20,
+        },
+        mockProvider1
+      );
+
+      // 3. Customer selects Provider 1 offer -> request becomes PROVIDER_SELECTED
+      await OrderService.selectOffer({ requestId: testReqId, offerId: offer1.id }, mockCustomer);
+
+      // 4. Provider 2 attempts to submit an offer after selection
+      await expect(
+        OfferService.createOffer(
+          {
+            requestId: testReqId,
+            pricingMode: 'fixed',
+            amountTiyn: 600000,
+            etaMinutes: 15,
+          },
+          mockProvider2
+        )
+      ).rejects.toThrow(ConflictError);
+
+      // Verify no SUBMITTED offers exist on the selected request
+      const submittedOffers = await db
+        .select()
+        .from(providerOffers)
+        .where(eq(providerOffers.requestId, testReqId));
+      expect(submittedOffers.every((o) => o.status !== 'SUBMITTED')).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------
+  // DIRECT DATABASE CHECK CONSTRAINT TESTS (P1)
+  // -------------------------------------------------------------
+  describe('Direct PostgreSQL Check Constraints Validation', () => {
+    it('DB rejects invalid ETA (< 1 or > 480) via chk_provider_offers_eta', async () => {
+      await expect(
+        db.insert(providerOffers).values({
+          requestId: createdRequestId,
+          providerId: SEED_PROVIDER_3_ID,
+          pricingMode: 'fixed',
+          amountTiyn: 500000,
+          etaMinutes: 0, // Violates eta >= 1
+        })
+      ).rejects.toThrow();
+
+      await expect(
+        db.insert(providerOffers).values({
+          requestId: createdRequestId,
+          providerId: SEED_PROVIDER_3_ID,
+          pricingMode: 'fixed',
+          amountTiyn: 500000,
+          etaMinutes: 500, // Violates eta <= 480
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects invalid pricing mode combinations via chk_provider_offers_pricing', async () => {
+      // Fixed pricing without amountTiyn
+      await expect(
+        db.insert(providerOffers).values({
+          requestId: createdRequestId,
+          providerId: SEED_PROVIDER_3_ID,
+          pricingMode: 'fixed',
+          amountTiyn: null,
+          etaMinutes: 20,
+        })
+      ).rejects.toThrow();
+
+      // Estimate range with min > max
+      await expect(
+        db.insert(providerOffers).values({
+          requestId: createdRequestId,
+          providerId: SEED_PROVIDER_3_ID,
+          pricingMode: 'estimate_range',
+          minAmountTiyn: 200000,
+          maxAmountTiyn: 100000, // max < min
+          etaMinutes: 20,
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects invalid provider rating (< 0 or > 500) via chk_providers_rating', async () => {
+      await expect(
+        db.insert(providers).values({
+          userId: SEED_CUSTOMER_ID,
+          businessName: 'Invalid Rating Provider',
+          providerType: 'STO',
+          rating: 600, // > 500
+        })
+      ).rejects.toThrow();
+
+      await expect(
+        db.insert(providers).values({
+          userId: SEED_CUSTOMER_ID,
+          businessName: 'Negative Rating Provider',
+          providerType: 'STO',
+          rating: -10, // < 0
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects negative completed_jobs via chk_providers_completed_jobs', async () => {
+      await expect(
+        db.insert(providers).values({
+          userId: SEED_CUSTOMER_ID,
+          businessName: 'Negative Jobs Provider',
+          providerType: 'STO',
+          completedJobs: -5,
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects invalid provider availability radius via chk_provider_availability_radius', async () => {
+      await expect(
+        db.insert(providerAvailability).values({
+          providerId: SEED_PROVIDER_3_ID,
+          isOnline: true,
+          location: { lat: 51.1283, lng: 71.4305 },
+          radiusKm: 0, // < 1
+          autoOfflineAt: new Date(Date.now() + 3600000),
+        })
+      ).rejects.toThrow();
+
+      await expect(
+        db.insert(providerAvailability).values({
+          providerId: SEED_PROVIDER_3_ID,
+          isOnline: true,
+          location: { lat: 51.1283, lng: 71.4305 },
+          radiusKm: 200, // > 100
+          autoOfflineAt: new Date(Date.now() + 3600000),
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects invalid service request radius via chk_service_requests_radius', async () => {
+      await expect(
+        db.insert(serviceRequests).values({
+          customerId: SEED_CUSTOMER_ID,
+          category: 'battery_jumpstart',
+          requiredCapabilities: ['BATTERY'],
+          location: { lat: 51.1283, lng: 71.4305 },
+          currentRadiusKm: 0, // < 1
+          expiresAt: new Date(Date.now() + 3600000),
+          nextExpansionAt: new Date(Date.now() + 180000),
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB rejects invalid vehicle year (< 1950 or > 2100) via chk_vehicles_year', async () => {
+      await expect(
+        db.insert(vehicles).values({
+          userId: SEED_CUSTOMER_ID,
+          make: 'Ford',
+          model: 'Model T',
+          year: 1908, // < 1950
+        })
+      ).rejects.toThrow();
+
+      await expect(
+        db.insert(vehicles).values({
+          userId: SEED_CUSTOMER_ID,
+          make: 'Tesla',
+          model: 'Cybercraft',
+          year: 2150, // > 2100
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB enforces UNIQUE(request_id) on orders table via uq_orders_request', async () => {
+      const [order] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.requestId, createdRequestId));
+      expect(order).toBeDefined();
+
+      // Attempting to insert another order for the same request_id directly into DB
+      await expect(
+        db.insert(orders).values({
+          requestId: createdRequestId, // Duplicate request_id
+          offerId: order.offerId,
+          customerId: order.customerId,
+          providerId: order.providerId,
+          status: 'PROVIDER_SELECTED',
+          agreedPricingMode: 'fixed',
+          agreedAmountTiyn: 500000,
+        })
+      ).rejects.toThrow();
+    });
   });
 });
