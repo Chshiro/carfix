@@ -121,6 +121,50 @@ export default function ProviderWorkspace({
   // 6. Stats & History Modal (Phase 4)
   const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
 
+  // 7. Withdrawal Modal State (Stage 3 Fintech)
+  const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
+  const [withdrawAmountKzt, setWithdrawAmountKzt] = useState<number>(5000);
+  const [withdrawDestinationType, setWithdrawDestinationType] = useState<'KASPI_GOLD' | 'HALYK_BANK'>('KASPI_GOLD');
+  const [withdrawCardNumber, setWithdrawCardNumber] = useState<string>('4400 4301 9988 1234');
+  const [isWithdrawing, setIsWithdrawing] = useState<boolean>(false);
+
+  // Handle Withdrawal Request
+  const handleWithdraw = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = localStorage.getItem('carfix_demo_token');
+    if (!token) {
+      addToast('Сессия не найдена', '❌');
+      return;
+    }
+    setIsWithdrawing(true);
+    try {
+      const res = await fetch('/api/payments/withdraw', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          amountTiyn: withdrawAmountKzt * 100,
+          destinationType: withdrawDestinationType,
+          destinationAccount: withdrawCardNumber.replace(/\s+/g, ''),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        addToast(`✅ Выплата ${withdrawAmountKzt.toLocaleString('ru-RU')} ₸ успешно отправлена на ${withdrawDestinationType}!`, '💳');
+        setShowWithdrawModal(false);
+        refreshMasterState();
+      } else {
+        addToast(`Ошибка вывода: ${data.error?.message || 'Недостаточно средств'}`, '❌');
+      }
+    } catch {
+      addToast('Сбой сети при запросе выплаты', '❌');
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
   // Track order assignment transition to trigger celebration toast
   const prevActiveOrderIdRef = useRef<string | null>(null);
 
@@ -457,6 +501,30 @@ export default function ProviderWorkspace({
               >
                 🗺️ Навигатор (2GIS)
               </a>
+            </div>
+          </div>
+
+          {/* ESCROW PAYMENT GUARANTEE BADGE */}
+          <div
+            style={{
+              padding: '0.85rem 1rem',
+              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(16, 185, 129, 0.12) 100%)',
+              border: '1px solid rgba(59, 130, 246, 0.4)',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              marginTop: '1rem',
+            }}
+          >
+            <span style={{ fontSize: '1.4rem' }}>🛡️</span>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '0.85rem', color: '#93c5fd' }}>
+                Оплата заблокирована сервисом CarFix Escrow (100% гарантия)
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                Клиент внес средства на безопасный счет. Сумма за вычетом 12% сервиса будет мгновенно зачислена в ваш кошелек при завершении заказа.
+              </div>
             </div>
           </div>
 
@@ -920,27 +988,46 @@ export default function ProviderWorkspace({
             </div>
 
             {/* Metrics cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>За сегодня</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--emerald)' }}>
-                  {(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
-                </div>
-              </div>
-
-              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Всего заработано</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 900, color: '#93c5fd' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Оборот (GMV)</div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: '#93c5fd' }}>
                   {(shiftStats?.totalGmvTiyn ? shiftStats.totalGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
                 </div>
               </div>
 
-              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Сбор CarFix (12%)</div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f87171' }}>
+                  {(shiftStats?.totalGmvTiyn ? Math.round((shiftStats.totalGmvTiyn * 0.12) / 100) : 0).toLocaleString('ru-RU')} ₸
+                </div>
+              </div>
+
+              <div style={{ padding: '0.85rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.4)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Чистый доход (88%)</div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: 'var(--emerald)' }}>
+                  {(shiftStats?.totalGmvTiyn ? Math.round((shiftStats.totalGmvTiyn * 0.88) / 100) : 0).toLocaleString('ru-RU')} ₸
+                </div>
+              </div>
+
+              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Выездов всего</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 900 }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: 900 }}>
                   {shiftStats?.totalCompletedJobs || 0}
                 </div>
               </div>
+            </div>
+
+            {/* Withdrawal Action Button */}
+            <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawModal(true)}
+                className="btn btn-emerald"
+                style={{ width: '100%', padding: '0.75rem', fontWeight: 800 }}
+              >
+                💳 Вывести на Kaspi Gold / Halyk Bank
+              </button>
             </div>
 
             {/* List of completed orders */}
@@ -982,6 +1069,97 @@ export default function ProviderWorkspace({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 6. WITHDRAWAL MODAL (Stage 3 Fintech) */}
+      {showWithdrawModal && (
+        <div className="modal-overlay" onClick={() => setShowWithdrawModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '440px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              💳 Вывод средств на карту
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Моментальный перевод через Kaspi Pay Gateway / Halyk Bank
+            </p>
+
+            <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Банк назначения:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawDestinationType('KASPI_GOLD')}
+                    className={`btn ${withdrawDestinationType === 'KASPI_GOLD' ? 'btn-emerald' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                  >
+                    🟡 Kaspi Gold
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawDestinationType('HALYK_BANK')}
+                    className={`btn ${withdrawDestinationType === 'HALYK_BANK' ? 'btn-emerald' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                  >
+                    🟢 Halyk Bank
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Номер карты или телефон:
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={withdrawCardNumber}
+                  onChange={(e) => setWithdrawCardNumber(e.target.value)}
+                  placeholder="4400 4301 9988 1234 или +7 701..."
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Сумма вывода (₸):
+                </label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={withdrawAmountKzt}
+                  onChange={(e) => setWithdrawAmountKzt(Number(e.target.value))}
+                  min={1000}
+                  step={500}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button
+                  type="submit"
+                  disabled={isWithdrawing}
+                  className="btn btn-emerald"
+                  style={{ flex: 1, fontWeight: 800 }}
+                >
+                  {isWithdrawing ? 'Отправка...' : 'Подтвердить вывод'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowWithdrawModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -159,6 +159,16 @@ export default function CustomerWorkspace({
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [cancelReason, setCancelReason] = useState<string>('Машина завелась сама');
 
+  // 7. Payment & Escrow Modal State (Stage 3 Fintech)
+  const [pendingPaymentOffer, setPendingPaymentOffer] = useState<OfferItem | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'KASPI_QR' | 'BANK_CARD' | 'CASH'>('KASPI_QR');
+  const [isHoldingPayment, setIsHoldingPayment] = useState<boolean>(false);
+
+  // 8. Dispute Modal State (Stage 1 Operations)
+  const [showDisputeModal, setShowDisputeModal] = useState<boolean>(false);
+  const [disputeReason, setDisputeReason] = useState<string>('Мастер опоздал или не выполнил заявку');
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState<boolean>(false);
+
   // Track previous status to trigger Toasts on status transitions
   const prevOrderStatusRef = useRef<string | null>(null);
   const prevOffersCountRef = useRef<number>(0);
@@ -357,6 +367,7 @@ export default function CustomerWorkspace({
   }, [selectedOrderId, activeAuthToken, setSelectedOrderResult, addToast]);
 
   // Phase 3: Select Offer Action
+  // Phase 3: Select Offer Action
   const handleSelectOffer = async (offerId: string) => {
     if (!createdRequestId || !activeAuthToken) return;
     setSelectingOfferId(offerId);
@@ -381,6 +392,87 @@ export default function CustomerWorkspace({
       addToast(`Сбой сети: ${e instanceof Error ? e.message : 'Error'}`, '❌');
     } finally {
       setSelectingOfferId(null);
+    }
+  };
+
+  // Stage 3 Fintech: Confirm Payment & Create Escrow Hold
+  const handleConfirmPaymentAndSelect = async (offer: OfferItem) => {
+    if (!createdRequestId || !activeAuthToken) return;
+    setIsHoldingPayment(true);
+    try {
+      // 1. Select master offer
+      const res = await fetch(`/api/requests/${createdRequestId}/select`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeAuthToken}`,
+        },
+        body: JSON.stringify({ offerId: offer.id }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        const orderRes = data.data as OrderResult;
+        setSelectedOrderResult(orderRes);
+
+        // 2. Create Escrow Hold
+        const amountTiyn = offer.amountTiyn || offer.minAmountTiyn || 500000;
+        await fetch('/api/payments/hold', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${activeAuthToken}`,
+          },
+          body: JSON.stringify({
+            orderId: orderRes.order.id,
+            amountTiyn,
+            paymentMethod,
+          }),
+        });
+
+        addToast(`🛡️ Средства ${(amountTiyn / 100).toLocaleString('ru-RU')} ₸ заморожены через CarFix Escrow! Мастер оповещен`, '✓');
+        setPendingPaymentOffer(null);
+      } else {
+        addToast(`Ошибка: ${data.error?.message || 'Не удалось оформить заказ'}`, '❌');
+      }
+    } catch (err: unknown) {
+      addToast(`Ошибка платежа: ${err instanceof Error ? err.message : 'Сбой'}`, '❌');
+    } finally {
+      setIsHoldingPayment(false);
+    }
+  };
+
+  // Stage 1 Operations: Submit Dispute
+  const handleSubmitDispute = async () => {
+    if (!selectedOrderResult || !activeAuthToken) return;
+    if (!disputeReason.trim()) {
+      addToast('Укажите причину претензии', '⚠️');
+      return;
+    }
+    setIsSubmittingDispute(true);
+    try {
+      const res = await fetch('/api/admin/disputes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeAuthToken}`,
+        },
+        body: JSON.stringify({
+          orderId: selectedOrderResult.order.id,
+          reason: disputeReason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        addToast('⚖️ Спор успешно передан в службу арбитража CarFix!', '⚖️');
+        setShowDisputeModal(false);
+      } else {
+        addToast(`Ошибка: ${data.error?.message || 'Сбой создания спора'}`, '❌');
+      }
+    } catch {
+      addToast('Сбой сети при отправке спора', '❌');
+    } finally {
+      setIsSubmittingDispute(false);
     }
   };
 
@@ -779,9 +871,17 @@ export default function CustomerWorkspace({
             </div>
           )}
 
-          {/* CANCEL ORDER BUTTON (Phase 3) */}
+          {/* CANCEL & DISPUTE BUTTONS (Phase 3 & Stage 1) */}
           {currentStatus !== 'COMPLETED' && currentStatus !== 'CANCELLED' && (
-            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <button
+                onClick={() => setShowDisputeModal(true)}
+                className="btn btn-secondary"
+                style={{ borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fcd34d', padding: '0.5rem 0.9rem', fontSize: '0.8rem' }}
+              >
+                ⚖️ Открыть спор / Претензия
+              </button>
+
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                 <input
                   type="text"
@@ -789,15 +889,15 @@ export default function CustomerWorkspace({
                   value={cancelReason}
                   onChange={(e) => setCancelReason(e.target.value)}
                   placeholder="Причина отмены..."
-                  style={{ width: '220px', padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}
+                  style={{ width: '200px', padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}
                 />
                 <button
                   onClick={handleCancelOrder}
                   disabled={isCancelling}
                   className="btn btn-secondary"
-                  style={{ borderColor: '#ef4444', color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.8rem' }}
+                  style={{ borderColor: '#ef4444', color: '#f87171', padding: '0.5rem 0.9rem', fontSize: '0.8rem' }}
                 >
-                  {isCancelling ? 'Отмена...' : '✕ Отменить заказ'}
+                  {isCancelling ? 'Отмена...' : '✕ Отменить'}
                 </button>
               </div>
             </div>
@@ -1095,8 +1195,8 @@ export default function CustomerWorkspace({
                         </div>
 
                         <button
-                          onClick={() => handleSelectOffer(offer.id)}
-                          disabled={selectingOfferId === offer.id}
+                          onClick={() => setPendingPaymentOffer(offer)}
+                          disabled={selectingOfferId === offer.id || isHoldingPayment}
                           className="btn btn-emerald"
                           style={{ padding: '0.65rem 1.25rem', fontWeight: 800 }}
                         >
@@ -1244,6 +1344,200 @@ export default function CustomerWorkspace({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 5. PAYMENT & ESCROW MODAL (Stage 3 Fintech) */}
+      {pendingPaymentOffer && (
+        <div className="modal-overlay" onClick={() => setPendingPaymentOffer(null)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '460px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              🛡️ Оплата & Escrow Гарантия CarFix
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Средства замораживаются на безопасном счете и будут выплачены мастеру только после выполнения работ.
+            </p>
+
+            {/* Provider summary */}
+            <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', marginBottom: '1.25rem' }}>
+              <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>{pendingPaymentOffer.businessName}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                ⏱️ Прибытие через: {pendingPaymentOffer.etaMinutes} мин
+              </div>
+            </div>
+
+            {/* Price breakdown */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Услуга мастера (88%):</span>
+                <span>{Math.round(((pendingPaymentOffer.amountTiyn || 500000) * 0.88) / 100).toLocaleString('ru-RU')} ₸</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Сервисный сбор CarFix (12%):</span>
+                <span>{Math.round(((pendingPaymentOffer.amountTiyn || 500000) * 0.12) / 100).toLocaleString('ru-RU')} ₸</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.5rem', fontWeight: 800, fontSize: '1.05rem', color: 'var(--emerald)' }}>
+                <span>Итого к оплате:</span>
+                <span>{((pendingPaymentOffer.amountTiyn || 500000) / 100).toLocaleString('ru-RU')} ₸</span>
+              </div>
+            </div>
+
+            {/* Payment Method Selector */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                Способ оплаты:
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: paymentMethod === 'KASPI_QR' ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
+                    background: paymentMethod === 'KASPI_QR' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(15, 23, 42, 0.6)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    checked={paymentMethod === 'KASPI_QR'}
+                    onChange={() => setPaymentMethod('KASPI_QR')}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>🟡 Kaspi Pay (QR / Редирект)</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>0% комиссии, мгновенная заморозка</div>
+                  </div>
+                </label>
+
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: paymentMethod === 'BANK_CARD' ? '2px solid var(--primary)' : '1px solid var(--border-subtle)',
+                    background: paymentMethod === 'BANK_CARD' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(15, 23, 42, 0.6)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    checked={paymentMethod === 'BANK_CARD'}
+                    onChange={() => setPaymentMethod('BANK_CARD')}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>💳 Банковская карта (Visa / Mastercard)</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Безопасный интернет-эквайринг</div>
+                  </div>
+                </label>
+
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: paymentMethod === 'CASH' ? '2px solid var(--emerald)' : '1px solid var(--border-subtle)',
+                    background: paymentMethod === 'CASH' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(15, 23, 42, 0.6)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    checked={paymentMethod === 'CASH'}
+                    onChange={() => setPaymentMethod('CASH')}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>💵 Наличными мастеру</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Оплата по факту выполнения работ</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => handleConfirmPaymentAndSelect(pendingPaymentOffer)}
+                disabled={isHoldingPayment}
+                className="btn btn-emerald"
+                style={{ flex: 1, padding: '0.8rem', fontWeight: 800 }}
+              >
+                {isHoldingPayment ? 'Заморозка средств...' : '⚡ Оплатить и вызвать мастера'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingPaymentOffer(null)}
+                className="btn btn-secondary"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. DISPUTE MODAL (Stage 1 Operations) */}
+      {showDisputeModal && (
+        <div className="modal-overlay" onClick={() => setShowDisputeModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '440px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              ⚖️ Служба арбитража CarFix
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Опишите проблему. Администратор проверит детали заказа и вернет средства при подтверждении нарушения.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Причина спора / претензии:
+                </label>
+                <textarea
+                  className="form-input"
+                  rows={4}
+                  value={disputeReason}
+                  onChange={(e) => setDisputeReason(e.target.value)}
+                  placeholder="Опишите, что пошло не так (опоздание, некачественный ремонт, отказ от выполнения)..."
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={handleSubmitDispute}
+                  disabled={isSubmittingDispute}
+                  className="btn btn-primary"
+                  style={{ flex: 1, background: '#ef4444', borderColor: '#ef4444', fontWeight: 800 }}
+                >
+                  {isSubmittingDispute ? 'Отправка...' : 'Отправить жалобу'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDisputeModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
