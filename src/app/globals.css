@@ -646,26 +646,69 @@ body {
   }
 }
 
-/* Modal Overlay */
+/* Touch Manipulation & Mobile Ergonomics */
+.touch-manipulation, button, .btn, .form-input, .badge {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #FFFFFF !important;
+  border-color: var(--border-hover) !important;
+}
+
+/* Modal Overlay & Responsive Mobile Bottom Sheet */
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(5, 8, 16, 0.82);
+  background: rgba(5, 8, 16, 0.85);
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   z-index: 2000;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  animation: fadeInModal 0.2s ease-out;
+  animation: fadeInModal 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-overlay .modal-content {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 22px !important;
+    border-top-right-radius: 22px !important;
+    max-height: 90vh !important;
+    padding: 1.75rem 1.25rem calc(1.75rem + env(safe-area-inset-bottom, 0px)) !important;
+    animation: slideUpModal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
 }
 
 @keyframes fadeInModal {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes slideUpModal {
+  from {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* Spinner */
@@ -681,3 +724,4 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+

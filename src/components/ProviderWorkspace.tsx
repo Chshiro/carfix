@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AstanaMap, { MapCoords, ProviderPin } from './AstanaMap';
 import { useMasterSession, NearbyRequestItem } from '../lib/useMasterSession';
 import { PricingMode, OrderResult } from './CustomerWorkspace';
+import ModalWrapper from './ui/ModalWrapper';
 
 export interface ProviderProfile {
   id: string;
@@ -787,308 +788,439 @@ export default function ProviderWorkspace({
       )}
 
       {/* 3. OFFER BIDDING MODAL */}
-      {biddingRequest && (
-        <div className="modal-overlay" onClick={() => setBiddingRequest(null)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '480px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              ⚡ Отправить предложение клиенту
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Заявка: {biddingRequest.category} &bull; ~{biddingRequest.distanceKm} км от вас
-            </p>
+      <ModalWrapper
+        isOpen={!!biddingRequest}
+        onClose={() => setBiddingRequest(null)}
+        isDirty={priceKzt !== 5000 || etaMinutes !== 15 || offerMessage !== 'Выезжаю сразу со всем необходимым инструментом.' || pricingMode !== 'fixed'}
+        title="⚡ Отправить предложение клиенту"
+        subtitle={biddingRequest ? `Заявка: ${biddingRequest.category} • ~${biddingRequest.distanceKm} км от вас` : ''}
+        maxWidth="500px"
+      >
+        <form onSubmit={handleSendOfferSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.35rem' }}>
+          {/* Segmented Pricing Switch */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.45rem', color: 'var(--text-secondary)' }}>
+              Формат расчета с водителем:
+            </label>
+            <div
+              style={{
+                background: '#111C33',
+                padding: '4px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-card)',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '4px',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setPricingMode('fixed')}
+                className="touch-manipulation"
+                style={{
+                  padding: '0.75rem',
+                  borderRadius: 'calc(var(--radius-md) - 4px)',
+                  fontWeight: 800,
+                  fontSize: '0.9rem',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  background: pricingMode === 'fixed' ? 'linear-gradient(135deg, var(--primary), var(--indigo))' : 'transparent',
+                  color: pricingMode === 'fixed' ? '#FFFFFF' : 'var(--text-muted)',
+                  boxShadow: pricingMode === 'fixed' ? '0 4px 12px rgba(37, 99, 235, 0.4)' : 'none',
+                }}
+              >
+                🔒 Фиксированная
+              </button>
+              <button
+                type="button"
+                onClick={() => setPricingMode('diagnostic_fee')}
+                className="touch-manipulation"
+                style={{
+                  padding: '0.75rem',
+                  borderRadius: 'calc(var(--radius-md) - 4px)',
+                  fontWeight: 800,
+                  fontSize: '0.9rem',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  background: pricingMode === 'diagnostic_fee' ? 'linear-gradient(135deg, var(--primary), var(--indigo))' : 'transparent',
+                  color: pricingMode === 'diagnostic_fee' ? '#FFFFFF' : 'var(--text-muted)',
+                  boxShadow: pricingMode === 'diagnostic_fee' ? '0 4px 12px rgba(37, 99, 235, 0.4)' : 'none',
+                }}
+              >
+                🔍 Диагностика
+              </button>
+            </div>
+          </div>
 
-            <form onSubmit={handleSendOfferSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {/* Pricing Mode */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
-                  Тип цены:
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => setPricingMode('fixed')}
-                    className={`btn ${pricingMode === 'fixed' ? 'btn-aquamarine' : 'btn-secondary'}`}
-                    style={{ padding: '0.65rem', fontSize: '0.9rem' }}
-                  >
-                    Фиксированная
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPricingMode('diagnostic_fee')}
-                    className={`btn ${pricingMode === 'diagnostic_fee' ? 'btn-aquamarine' : 'btn-secondary'}`}
-                    style={{ padding: '0.65rem', fontSize: '0.9rem' }}
-                  >
-                    Диагностика
-                  </button>
-                </div>
-              </div>
+          {/* Price & Quick Amount Chips */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.45rem', color: '#FFFFFF' }}>
+              {pricingMode === 'fixed' ? 'Сумма за выезд и работу (₸):' : 'Стоимость выезда и диагностики (₸):'}
+            </label>
+            <div style={{ position: 'relative', marginBottom: '0.65rem' }}>
+              <input
+                type="number"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className="form-input"
+                style={{
+                  fontSize: '1.45rem',
+                  fontWeight: 900,
+                  paddingRight: '3rem',
+                  color: 'var(--aquamarine-bright)',
+                }}
+                value={priceKzt || ''}
+                onChange={(e) => setPriceKzt(Number(e.target.value))}
+                min={1000}
+                step={500}
+                required
+              />
+              <span
+                style={{
+                  position: 'absolute',
+                  right: '1rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  fontWeight: 900,
+                  fontSize: '1.35rem',
+                  color: 'var(--text-muted)',
+                  pointerEvents: 'none',
+                }}
+              >
+                ₸
+              </span>
+            </div>
 
-              {/* Price & ETA Inputs */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
-                    Сумма (₸):
-                  </label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={priceKzt}
-                    onChange={(e) => setPriceKzt(Number(e.target.value))}
-                    min={1000}
-                    step={500}
-                    required
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
-                    Время прибытия (мин):
-                  </label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={etaMinutes}
-                    onChange={(e) => setEtaMinutes(Number(e.target.value))}
-                    min={5}
-                    max={120}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Message to Customer */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
-                  Сообщение клиенту:
-                </label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={offerMessage}
-                  onChange={(e) => setOfferMessage(e.target.value)}
-                  placeholder="Опишите готовность и инструмент..."
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+            {/* Quick Price Chips & Step Buttons */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', alignItems: 'center' }}>
+              {[3000, 5000, 7000, 10000].map((amt) => (
                 <button
-                  type="submit"
-                  disabled={isSendingOffer}
-                  className="btn btn-aquamarine"
-                  style={{ flex: 1, padding: '0.95rem', fontWeight: 900 }}
+                  key={amt}
+                  type="button"
+                  onClick={() => setPriceKzt(amt)}
+                  className="touch-manipulation"
+                  style={{
+                    padding: '0.45rem 0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: priceKzt === amt ? '1px solid var(--aquamarine)' : '1px solid var(--border-card)',
+                    background: priceKzt === amt ? 'rgba(6, 182, 212, 0.15)' : '#111C33',
+                    color: priceKzt === amt ? 'var(--aquamarine-bright)' : 'var(--text-secondary)',
+                    fontWeight: 800,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
                 >
-                  {isSendingOffer ? 'Отправка...' : 'Отправить отклик'}
+                  {amt.toLocaleString('ru-RU')} ₸
+                </button>
+              ))}
+
+              <div style={{ display: 'flex', gap: '0.45rem', marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  onClick={() => setPriceKzt((p) => (p || 0) + 1000)}
+                  className="touch-manipulation"
+                  style={{
+                    padding: '0.45rem 0.65rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  +1 000 ₸
                 </button>
                 <button
                   type="button"
-                  onClick={() => setBiddingRequest(null)}
-                  className="btn btn-secondary"
+                  onClick={() => setPriceKzt((p) => (p || 0) + 2000)}
+                  className="touch-manipulation"
+                  style={{
+                    padding: '0.45rem 0.65rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                  }}
                 >
-                  Отмена
+                  +2 000 ₸
                 </button>
               </div>
-            </form>
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* 4. CANCEL ORDER MODAL */}
-      {showCancelModal && (
-        <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '440px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FDA4AF' }}>
-              ✕ Аварийная отмена заказа
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
-              Укажите причину отмены. Частые необоснованные отмены снижают рейтинг в системе.
-            </p>
+          {/* ETA Quick Pills */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.45rem', color: '#FFFFFF' }}>
+              Время прибытия (минут):
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '0.65rem' }}>
+              {[10, 15, 20, 30, 45].map((mins) => (
+                <button
+                  key={mins}
+                  type="button"
+                  onClick={() => setEtaMinutes(mins)}
+                  className="touch-manipulation"
+                  style={{
+                    flex: 1,
+                    minWidth: '50px',
+                    padding: '0.55rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: etaMinutes === mins ? '1px solid var(--aquamarine)' : '1px solid var(--border-card)',
+                    background: etaMinutes === mins ? 'rgba(6, 182, 212, 0.15)' : '#111C33',
+                    color: etaMinutes === mins ? 'var(--aquamarine-bright)' : 'var(--text-secondary)',
+                    fontWeight: 800,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {mins} мин
+                </button>
+              ))}
+            </div>
 
+            <input
+              type="number"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="form-input"
+              value={etaMinutes || ''}
+              onChange={(e) => setEtaMinutes(Number(e.target.value))}
+              min={5}
+              max={120}
+              required
+              placeholder="Минут до прибытия..."
+            />
+          </div>
+
+          {/* Message */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+              Сообщение водителю:
+            </label>
             <input
               type="text"
               className="form-input"
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="Причина отмены..."
-              style={{ marginBottom: '1.25rem' }}
+              value={offerMessage}
+              onChange={(e) => setOfferMessage(e.target.value)}
+              placeholder="Опишите готовность, инструмент..."
             />
-
-            <div style={{ display: 'flex', gap: '0.85rem' }}>
-              <button
-                type="button"
-                onClick={handleCancelOrderSubmit}
-                disabled={isUpdatingStatus}
-                className="btn btn-primary"
-                style={{ flex: 1, background: '#F43F5E', borderColor: '#F43F5E', fontWeight: 900 }}
-              >
-                {isUpdatingStatus ? 'Отмена...' : 'Подтвердить отмену'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCancelModal(false)}
-                className="btn btn-secondary"
-              >
-                Назад
-              </button>
-            </div>
           </div>
-        </div>
-      )}
 
-      {/* 5. SHIFT STATS & WITHDRAWAL MODAL */}
-      {showStatsModal && (
-        <div className="modal-overlay" onClick={() => setShowStatsModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '520px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.45rem', fontWeight: 900, color: '#FFFFFF' }}>
-                💰 Кошелек & Статистика смены
-              </h3>
-              <button
-                onClick={() => setShowStatsModal(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.6rem', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Wallet Balance Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-              <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Выручка за сегодня</div>
-                <div style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--aquamarine-bright)', marginTop: '0.35rem' }}>
-                  {(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
-                </div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                  {shiftStats?.todayOrdersCount || 0} завершенных выездов
-                </div>
-              </div>
-
-              <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Баланс к выводу (88%)</div>
-                <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#10B981', marginTop: '0.35rem' }}>
-                  {Math.round(((shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn * 0.88 : 0) / 100)).toLocaleString('ru-RU')} ₸
-                </div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                  Сервисный сбор 12% учтен
-                </div>
-              </div>
-            </div>
-
-            {/* Withdrawal Trigger Button */}
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
             <button
-              onClick={() => {
-                setShowStatsModal(false);
-                setShowWithdrawModal(true);
+              type="submit"
+              disabled={isSendingOffer}
+              className="btn btn-aquamarine touch-manipulation"
+              style={{
+                flex: 1,
+                minHeight: '52px',
+                fontWeight: 900,
+                fontSize: '1.05rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
               }}
-              className="btn btn-aquamarine"
-              style={{ width: '100%', padding: '1rem', fontWeight: 900, fontSize: '1.1rem' }}
             >
-              💳 Вывести на Kaspi Gold / Halyk
+              {isSendingOffer ? (
+                <>
+                  <span className="spinner" style={{ width: '18px', height: '18px' }} />
+                  <span>Отправка отклика...</span>
+                </>
+              ) : (
+                '⚡ Отправить предложение'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setBiddingRequest(null)}
+              className="btn btn-secondary touch-manipulation"
+              style={{ minHeight: '52px', padding: '0 1.5rem', fontWeight: 700 }}
+            >
+              Отмена
+            </button>
+          </div>
+        </form>
+      </ModalWrapper>
+
+      {/* 4. CANCEL ORDER MODAL */}
+      <ModalWrapper
+        isOpen={showCancelModal}
+        onClose={() => setShowCancelModal(false)}
+        isDirty={cancelReason.trim().length > 0 && cancelReason !== 'Клиент перестал отвечать на звонки'}
+        title="✕ Аварийная отмена заказа"
+        subtitle="Укажите причину отмены. Частые необоснованные отмены снижают рейтинг в системе."
+        maxWidth="460px"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <input
+            type="text"
+            className="form-input"
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="Причина отмены..."
+          />
+
+          <div style={{ display: 'flex', gap: '0.85rem' }}>
+            <button
+              type="button"
+              onClick={handleCancelOrderSubmit}
+              disabled={isUpdatingStatus}
+              className="btn btn-primary touch-manipulation"
+              style={{ flex: 1, minHeight: '48px', background: '#F43F5E', borderColor: '#F43F5E', fontWeight: 900 }}
+            >
+              {isUpdatingStatus ? 'Отмена...' : 'Подтвердить отмену'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCancelModal(false)}
+              className="btn btn-secondary touch-manipulation"
+              style={{ minHeight: '48px', padding: '0 1.25rem' }}
+            >
+              Назад
             </button>
           </div>
         </div>
-      )}
+      </ModalWrapper>
 
-      {/* 6. WITHDRAWAL FORM MODAL */}
-      {showWithdrawModal && (
-        <div className="modal-overlay" onClick={() => setShowWithdrawModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '460px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              💳 Моментальный вывод средств
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Вывод баланса мастера на банковские карты Казахстана без дополнительных комиссий.
-            </p>
+      {/* 5. SHIFT STATS & WITHDRAWAL MODAL */}
+      <ModalWrapper
+        isOpen={showStatsModal}
+        onClose={() => setShowStatsModal(false)}
+        title="💰 Кошелек & Статистика смены"
+        maxWidth="540px"
+      >
+        {/* Wallet Balance Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Выручка за сегодня</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--aquamarine-bright)', marginTop: '0.35rem' }}>
+              {(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+              {shiftStats?.todayOrdersCount || 0} завершенных выездов
+            </div>
+          </div>
 
-            <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
-                  Банк назначения:
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => setWithdrawDestinationType('KASPI_GOLD')}
-                    className={`btn ${withdrawDestinationType === 'KASPI_GOLD' ? 'btn-aquamarine' : 'btn-secondary'}`}
-                    style={{ padding: '0.75rem', fontSize: '0.9rem' }}
-                  >
-                    🟡 Kaspi Gold
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWithdrawDestinationType('HALYK_BANK')}
-                    className={`btn ${withdrawDestinationType === 'HALYK_BANK' ? 'btn-aquamarine' : 'btn-secondary'}`}
-                    style={{ padding: '0.75rem', fontSize: '0.9rem' }}
-                  >
-                    🟢 Halyk Bank
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
-                  Номер карты / телефона:
-                </label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={withdrawCardNumber}
-                  onChange={(e) => setWithdrawCardNumber(e.target.value)}
-                  placeholder="4400 0000 0000 0000"
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
-                  Сумма вывода (₸):
-                </label>
-                <input
-                  type="number"
-                  className="form-input"
-                  value={withdrawAmountKzt}
-                  onChange={(e) => setWithdrawAmountKzt(Number(e.target.value))}
-                  min={1000}
-                  step={500}
-                  required
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
-                <button
-                  type="submit"
-                  disabled={isWithdrawing}
-                  className="btn btn-aquamarine"
-                  style={{ flex: 1, padding: '0.95rem', fontWeight: 900 }}
-                >
-                  {isWithdrawing ? 'Вывод...' : 'Перевести на карту'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowWithdrawModal(false)}
-                  className="btn btn-secondary"
-                >
-                  Отмена
-                </button>
-              </div>
-            </form>
+          <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Баланс к выводу (88%)</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#10B981', marginTop: '0.35rem' }}>
+              {Math.round(((shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn * 0.88 : 0) / 100)).toLocaleString('ru-RU')} ₸
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+              Сервисный сбор 12% учтен
+            </div>
           </div>
         </div>
-      )}
+
+        {/* Withdrawal Trigger Button */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowStatsModal(false);
+            setShowWithdrawModal(true);
+          }}
+          className="btn btn-aquamarine touch-manipulation"
+          style={{ width: '100%', minHeight: '52px', fontWeight: 900, fontSize: '1.1rem' }}
+        >
+          💳 Вывести на Kaspi Gold / Halyk
+        </button>
+      </ModalWrapper>
+
+      {/* 6. WITHDRAWAL FORM MODAL */}
+      <ModalWrapper
+        isOpen={showWithdrawModal}
+        onClose={() => setShowWithdrawModal(false)}
+        isDirty={withdrawAmountKzt !== 5000 || withdrawCardNumber !== '4400 4301 9988 1234'}
+        title="💳 Моментальный вывод средств"
+        subtitle="Вывод баланса мастера на банковские карты Казахстана без дополнительных комиссий."
+        maxWidth="480px"
+      >
+        <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
+              Банк назначения:
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
+              <button
+                type="button"
+                onClick={() => setWithdrawDestinationType('KASPI_GOLD')}
+                className={`btn touch-manipulation ${withdrawDestinationType === 'KASPI_GOLD' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                style={{ padding: '0.75rem', fontSize: '0.9rem' }}
+              >
+                🟡 Kaspi Gold
+              </button>
+              <button
+                type="button"
+                onClick={() => setWithdrawDestinationType('HALYK_BANK')}
+                className={`btn touch-manipulation ${withdrawDestinationType === 'HALYK_BANK' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                style={{ padding: '0.75rem', fontSize: '0.9rem' }}
+              >
+                🟢 Halyk Bank
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+              Номер карты / телефона:
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="form-input"
+              value={withdrawCardNumber}
+              onChange={(e) => setWithdrawCardNumber(e.target.value)}
+              placeholder="4400 0000 0000 0000"
+              required
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+              Сумма вывода (₸):
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="form-input"
+              value={withdrawAmountKzt || ''}
+              onChange={(e) => setWithdrawAmountKzt(Number(e.target.value))}
+              min={1000}
+              step={500}
+              required
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+            <button
+              type="submit"
+              disabled={isWithdrawing}
+              className="btn btn-aquamarine touch-manipulation"
+              style={{ flex: 1, minHeight: '52px', fontWeight: 900 }}
+            >
+              {isWithdrawing ? 'Вывод...' : 'Перевести на карту'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowWithdrawModal(false)}
+              className="btn btn-secondary touch-manipulation"
+              style={{ minHeight: '52px' }}
+            >
+              Отмена
+            </button>
+          </div>
+        </form>
+      </ModalWrapper>
     </div>
   );
 }

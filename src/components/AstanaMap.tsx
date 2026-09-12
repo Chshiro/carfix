@@ -60,6 +60,7 @@ export default function AstanaMap({
           center: [center.lat, center.lng],
           zoom: 12,
           zoomControl: true,
+          scrollWheelZoom: false,
         });
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

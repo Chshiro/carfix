@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AstanaMap, { ASTANA_LANDMARKS, MapCoords, ProviderPin } from './AstanaMap';
 import { useCustomerSession } from '../lib/useCustomerSession';
+import ModalWrapper from './ui/ModalWrapper';
 
 export type ServiceCategory = 'electrical_starting' | 'battery_jumpstart' | 'mobile_mechanic';
 export type PricingMode = 'fixed' | 'diagnostic_fee' | 'estimate_range';
@@ -1247,209 +1248,192 @@ export default function CustomerWorkspace({
       )}
 
       {/* 3. PHONE AUTH MODAL */}
-      {showPhoneModal && (
-        <div className="modal-overlay" onClick={() => setShowPhoneModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '440px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              📱 {otpStep === 'phone' ? 'Вход в CarFix' : 'Подтверждение номера'}
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              {otpStep === 'phone'
-                ? 'Безопасный вход по SMS-коду на номер любого мобильного оператора Казахстана.'
-                : `Введите 4-значный код, отправленный на ${phoneInput}. В демо-режиме код: 1111.`}
-            </p>
-
-            {otpStep === 'phone' ? (
-              <form onSubmit={handleRequestOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                    Номер телефона:
-                  </label>
-                  <input
-                    type="tel"
-                    className="form-input"
-                    value={phoneInput}
-                    onChange={(e) => setPhoneInput(e.target.value)}
-                    placeholder="+7 (701) 000-00-00"
-                    required
-                  />
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                    Поддерживаются номера Kcell, Activ, Beeline, Tele2, Altel (+7 7xx)
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
-                  <button
-                    type="submit"
-                    disabled={isRequestingOtp}
-                    className="btn btn-primary"
-                    style={{ flex: 1 }}
-                  >
-                    {isRequestingOtp ? 'Отправка...' : 'Получить SMS-код ➔'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowPhoneModal(false)}
-                    className="btn btn-secondary"
-                  >
-                    Отмена
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <label style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                      Код из SMS:
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setOtpStep('phone')}
-                      style={{ background: 'none', border: 'none', color: 'var(--aquamarine-bright)', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}
-                    >
-                      Изменить номер
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    maxLength={4}
-                    className="form-input"
-                    style={{ fontSize: '1.5rem', textAlign: 'center', letterSpacing: '0.5rem', fontWeight: 900 }}
-                    value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
-                    placeholder="1111"
-                    autoFocus
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
-                  <button
-                    type="submit"
-                    disabled={isLoggingIn}
-                    className="btn btn-primary"
-                    style={{ flex: 1 }}
-                  >
-                    {isLoggingIn ? 'Проверка...' : 'Войти в аккаунт'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOtpStep('phone')}
-                    className="btn btn-secondary"
-                  >
-                    Назад
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 4. ORDER HISTORY MODAL */}
-      {showHistoryModal && (
-        <div className="modal-overlay" onClick={() => setShowHistoryModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '680px', width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.45rem', fontWeight: 900, color: '#FFFFFF' }}>
-                📋 История моих заказов
-              </h3>
-              <button
-                onClick={() => setShowHistoryModal(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.6rem', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
+      <ModalWrapper
+        isOpen={showPhoneModal}
+        onClose={() => setShowPhoneModal(false)}
+        isDirty={phoneInput.trim() !== '+7 (701) 111-22-33' && phoneInput.trim().length > 4}
+        title={otpStep === 'phone' ? '📱 Вход в CarFix' : '📱 Подтверждение номера'}
+        subtitle={
+          otpStep === 'phone'
+            ? 'Безопасный вход по SMS-коду на номер любого мобильного оператора Казахстана.'
+            : `Введите 4-значный код, отправленный на ${phoneInput}. В демо-режиме код: 1111.`
+        }
+        maxWidth="440px"
+      >
+        {otpStep === 'phone' ? (
+          <form onSubmit={handleRequestOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                Номер телефона:
+              </label>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                className="form-input"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                placeholder="+7 (701) 000-00-00"
+                required
+              />
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                Поддерживаются номера Kcell, Activ, Beeline, Tele2, Altel (+7 7xx)
+              </div>
             </div>
 
-            {isLoadingHistory ? (
-              <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                Загрузка истории...
+            <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+              <button
+                type="submit"
+                disabled={isRequestingOtp}
+                className="btn btn-primary touch-manipulation"
+                style={{ flex: 1, minHeight: '48px' }}
+              >
+                {isRequestingOtp ? 'Отправка...' : 'Получить SMS-код ➔'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPhoneModal(false)}
+                className="btn btn-secondary touch-manipulation"
+                style={{ minHeight: '48px' }}
+              >
+                Отмена
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleVerifyOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                  Код из SMS:
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setOtpStep('phone')}
+                  className="touch-manipulation"
+                  style={{ background: 'none', border: 'none', color: 'var(--aquamarine-bright)', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}
+                >
+                  Изменить номер
+                </button>
               </div>
-            ) : historyOrders.length === 0 ? (
-              <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                У вас пока нет оформленных заказов.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {historyOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    style={{
-                      padding: '1.25rem',
-                      background: '#111C33',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--border-subtle)',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: '1rem',
-                    }}
-                  >
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                        <span
-                          className={`badge ${
-                            order.status === 'COMPLETED' ? 'badge-emerald' : 'badge-amber'
-                          }`}
-                          style={{ fontSize: '0.75rem' }}
-                        >
-                          {order.status}
-                        </span>
-                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                          {new Date(order.createdAt).toLocaleDateString('ru-RU')}
-                        </span>
-                      </div>
-                      <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#FFFFFF', marginTop: '0.35rem' }}>
-                        {order.provider.businessName}
-                      </div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                        {order.category} {order.review ? `&bull; Оценка: ⭐ ${order.review.rating}` : ''}
-                      </div>
-                    </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="one-time-code"
+                maxLength={4}
+                className="form-input"
+                style={{ fontSize: '1.5rem', textAlign: 'center', letterSpacing: '0.5rem', fontWeight: 900 }}
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value)}
+                placeholder="1111"
+                autoFocus
+                required
+              />
+            </div>
 
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '1.35rem', fontWeight: 900, color: 'var(--aquamarine-bright)' }}>
-                        {order.finalAmountTiyn
-                          ? `${(order.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
-                          : order.agreedAmountTiyn
-                          ? `${(order.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
-                          : '-'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="btn btn-primary touch-manipulation"
+                style={{ flex: 1, minHeight: '48px' }}
+              >
+                {isLoggingIn ? 'Проверка...' : 'Войти в аккаунт'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOtpStep('phone')}
+                className="btn btn-secondary touch-manipulation"
+                style={{ minHeight: '48px' }}
+              >
+                Назад
+              </button>
+            </div>
+          </form>
+        )}
+      </ModalWrapper>
+
+      {/* 4. ORDER HISTORY MODAL */}
+      <ModalWrapper
+        isOpen={showHistoryModal}
+        onClose={() => setShowHistoryModal(false)}
+        title="📋 История моих заказов"
+        maxWidth="680px"
+      >
+        {isLoadingHistory ? (
+          <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            Загрузка истории...
           </div>
-        </div>
-      )}
+        ) : historyOrders.length === 0 ? (
+          <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            У вас пока нет оформленных заказов.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {historyOrders.map((order) => (
+              <div
+                key={order.id}
+                style={{
+                  padding: '1.25rem',
+                  background: '#111C33',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '1rem',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                    <span
+                      className={`badge ${
+                        order.status === 'COMPLETED' ? 'badge-emerald' : 'badge-amber'
+                      }`}
+                      style={{ fontSize: '0.75rem' }}
+                    >
+                      {order.status}
+                    </span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {new Date(order.createdAt).toLocaleDateString('ru-RU')}
+                    </span>
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#FFFFFF', marginTop: '0.35rem' }}>
+                    {order.provider.businessName}
+                  </div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                    {order.category} {order.review ? `• Оценка: ⭐ ${order.review.rating}` : ''}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 900, color: 'var(--aquamarine-bright)' }}>
+                    {order.finalAmountTiyn
+                      ? `${(order.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                      : order.agreedAmountTiyn
+                      ? `${(order.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </ModalWrapper>
 
       {/* 5. PAYMENT & ESCROW MODAL */}
-      {pendingPaymentOffer && (
-        <div className="modal-overlay" onClick={() => setPendingPaymentOffer(null)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '480px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              🛡️ Оплата & Escrow Гарантия
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Средства замораживаются на безопасном счете и переводятся мастеру только после выполнения работ.
-            </p>
-
+      <ModalWrapper
+        isOpen={!!pendingPaymentOffer}
+        onClose={() => setPendingPaymentOffer(null)}
+        isDirty={isHoldingPayment}
+        title="🛡️ Оплата & Escrow Гарантия"
+        subtitle="Средства замораживаются на безопасном счете и переводятся мастеру только после выполнения работ."
+        maxWidth="480px"
+      >
+        {pendingPaymentOffer && (
+          <div>
             {/* Provider summary */}
             <div style={{ padding: '1rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)', marginBottom: '1.25rem' }}>
               <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#FFFFFF' }}>{pendingPaymentOffer.businessName}</div>
@@ -1559,75 +1543,69 @@ export default function CustomerWorkspace({
                 type="button"
                 onClick={() => handleConfirmPaymentAndSelect(pendingPaymentOffer)}
                 disabled={isHoldingPayment}
-                className="btn btn-aquamarine"
-                style={{ flex: 1, padding: '0.95rem', fontWeight: 900 }}
+                className="btn btn-aquamarine touch-manipulation"
+                style={{ flex: 1, minHeight: '52px', fontWeight: 900 }}
               >
                 {isHoldingPayment ? 'Заморозка средств...' : '⚡ Оплатить и вызвать мастера'}
               </button>
               <button
                 type="button"
                 onClick={() => setPendingPaymentOffer(null)}
-                className="btn btn-secondary"
+                className="btn btn-secondary touch-manipulation"
+                style={{ minHeight: '52px' }}
               >
                 Отмена
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </ModalWrapper>
 
       {/* 6. DISPUTE MODAL */}
-      {showDisputeModal && (
-        <div className="modal-overlay" onClick={() => setShowDisputeModal(false)}>
-          <div
-            className="glass-card"
-            style={{ maxWidth: '460px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              ⚖️ Служба арбитража CarFix
-            </h3>
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Опишите проблему. Администратор проверит детали заказа и произведет возврат средств при подтверждении нарушения.
-            </p>
+      <ModalWrapper
+        isOpen={showDisputeModal}
+        onClose={() => setShowDisputeModal(false)}
+        isDirty={disputeReason.trim().length > 0 && disputeReason !== 'Мастер опоздал или не выполнил заявку'}
+        title="⚖️ Служба арбитража CarFix"
+        subtitle="Опишите проблему. Администратор проверит детали заказа и произведет возврат средств при подтверждении нарушения."
+        maxWidth="460px"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
+              Причина претензии:
+            </label>
+            <textarea
+              className="form-input"
+              rows={4}
+              value={disputeReason}
+              onChange={(e) => setDisputeReason(e.target.value)}
+              placeholder="Опишите, что пошло не так (опоздание, некачественный ремонт, отказ от выполнения)..."
+              required
+            />
+          </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
-                  Причина претензии:
-                </label>
-                <textarea
-                  className="form-input"
-                  rows={4}
-                  value={disputeReason}
-                  onChange={(e) => setDisputeReason(e.target.value)}
-                  placeholder="Опишите, что пошло не так (опоздание, некачественный ремонт, отказ от выполнения)..."
-                  required
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.85rem' }}>
-                <button
-                  type="button"
-                  onClick={handleSubmitDispute}
-                  disabled={isSubmittingDispute}
-                  className="btn btn-primary"
-                  style={{ flex: 1, background: '#F43F5E', borderColor: '#F43F5E', fontWeight: 900 }}
-                >
-                  {isSubmittingDispute ? 'Отправка...' : 'Отправить жалобу'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDisputeModal(false)}
-                  className="btn btn-secondary"
-                >
-                  Отмена
-                </button>
-              </div>
-            </div>
+          <div style={{ display: 'flex', gap: '0.85rem' }}>
+            <button
+              type="button"
+              onClick={handleSubmitDispute}
+              disabled={isSubmittingDispute}
+              className="btn btn-primary touch-manipulation"
+              style={{ flex: 1, minHeight: '48px', background: '#F43F5E', borderColor: '#F43F5E', fontWeight: 900 }}
+            >
+              {isSubmittingDispute ? 'Отправка...' : 'Отправить жалобу'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDisputeModal(false)}
+              className="btn btn-secondary touch-manipulation"
+              style={{ minHeight: '48px' }}
+            >
+              Отмена
+            </button>
           </div>
         </div>
-      )}
+      </ModalWrapper>
     </div>
   );
 }

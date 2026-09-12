@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { ProviderPin } from './AstanaMap';
+import ModalWrapper from './ui/ModalWrapper';
 
 const DynamicAstanaMap = dynamic(() => import('./AstanaMap'), {
   ssr: false,
@@ -122,6 +123,16 @@ export default function AdminWorkspace({ getDemoToken }: AdminWorkspaceProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [orderFilter, setOrderFilter] = useState<string>('ALL');
+
+  // Modals state
+  const [selectedProviderModal, setSelectedProviderModal] = useState<AdminProviderItem | null>(null);
+  const [blockReasonInput, setBlockReasonInput] = useState('');
+  const [isUpdatingProvider, setIsUpdatingProvider] = useState(false);
+
+  const [selectedDisputeModal, setSelectedDisputeModal] = useState<DisputeItem | null>(null);
+  const [disputeResolutionType, setDisputeResolutionType] = useState<'RESOLVED_REFUND' | 'RESOLVED_RELEASE' | 'RESOLVED_SPLIT' | 'DISMISSED'>('RESOLVED_REFUND');
+  const [disputeNotesInput, setDisputeNotesInput] = useState('');
+  const [isResolvingDispute, setIsResolvingDispute] = useState(false);
 
   // 1. Authenticate Admin
   useEffect(() => {
@@ -630,15 +641,25 @@ export default function AdminWorkspace({ getDemoToken }: AdminWorkspaceProps) {
 
                 <div style={{ display: 'flex', gap: '0.65rem' }}>
                   <button
+                    onClick={() => {
+                      setSelectedProviderModal(p);
+                      setBlockReasonInput(p.blockReason || '');
+                    }}
+                    className="btn btn-secondary touch-manipulation"
+                    style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', color: 'var(--aquamarine-bright)', borderColor: 'var(--border-subtle)' }}
+                  >
+                    🔍 Досье & ИИН
+                  </button>
+                  <button
                     onClick={() => handleVerifyMaster(p.id, 'VERIFIED')}
-                    className="btn btn-secondary"
+                    className="btn btn-secondary touch-manipulation"
                     style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', color: '#10B981', borderColor: '#10B981' }}
                   >
                     ✓ Верифицировать
                   </button>
                   <button
                     onClick={() => handleToggleBlock(p.id, p.isBlocked)}
-                    className="btn btn-secondary"
+                    className="btn btn-secondary touch-manipulation"
                     style={{
                       padding: '0.5rem 1rem',
                       fontSize: '0.85rem',
@@ -699,32 +720,29 @@ export default function AdminWorkspace({ getDemoToken }: AdminWorkspaceProps) {
                   {d.status === 'OPEN' && (
                     <div style={{ display: 'flex', gap: '0.65rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                       <button
-                        onClick={() => handleResolveDispute(d.id, 'RESOLVED_REFUND', undefined, 'Полный возврат средств клиенту')}
-                        className="btn btn-primary"
-                        style={{ padding: '0.55rem 1rem', fontSize: '0.85rem' }}
+                        onClick={() => {
+                          setSelectedDisputeModal(d);
+                          setDisputeResolutionType('RESOLVED_REFUND');
+                          setDisputeNotesInput('');
+                        }}
+                        className="btn btn-primary touch-manipulation"
+                        style={{ padding: '0.55rem 1.15rem', fontSize: '0.9rem', fontWeight: 700 }}
                       >
-                        ↩️ Полный возврат клиенту
+                        ⚖️ Разрешить спор в модалке
+                      </button>
+                      <button
+                        onClick={() => handleResolveDispute(d.id, 'RESOLVED_REFUND', undefined, 'Полный возврат средств клиенту')}
+                        className="btn btn-secondary touch-manipulation"
+                        style={{ padding: '0.55rem 0.85rem', fontSize: '0.85rem' }}
+                      >
+                        ↩️ Быстрый возврат
                       </button>
                       <button
                         onClick={() => handleResolveDispute(d.id, 'RESOLVED_RELEASE', undefined, 'Выплата мастеру в полном объеме')}
-                        className="btn btn-aquamarine"
-                        style={{ padding: '0.55rem 1rem', fontSize: '0.85rem' }}
+                        className="btn btn-secondary touch-manipulation"
+                        style={{ padding: '0.55rem 0.85rem', fontSize: '0.85rem' }}
                       >
                         💵 Выплата мастеру
-                      </button>
-                      <button
-                        onClick={() => handleResolveDispute(d.id, 'RESOLVED_SPLIT', undefined, 'Разделение 50/50')}
-                        className="btn btn-secondary"
-                        style={{ padding: '0.55rem 1rem', fontSize: '0.85rem' }}
-                      >
-                        ⚖️ Разделить 50/50
-                      </button>
-                      <button
-                        onClick={() => handleResolveDispute(d.id, 'DISMISSED', undefined, 'Претензия отклонена')}
-                        className="btn btn-secondary"
-                        style={{ padding: '0.55rem 1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}
-                      >
-                        Отклонить
                       </button>
                     </div>
                   )}
@@ -733,6 +751,275 @@ export default function AdminWorkspace({ getDemoToken }: AdminWorkspaceProps) {
             </div>
           )}
         </div>
+      )}
+
+      {/* MODAL 1: MASTER VERIFICATION & DOSSIER */}
+      {selectedProviderModal && (
+        <ModalWrapper
+          isOpen={!!selectedProviderModal}
+          onClose={() => {
+            setSelectedProviderModal(null);
+            setBlockReasonInput('');
+          }}
+          isDirty={blockReasonInput.trim().length > 0}
+          title="Досье мастера & Верификация ИИН"
+          subtitle={`Профиль исполнителя: ${selectedProviderModal.businessName}`}
+          maxWidth="580px"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                padding: '1rem 1.25rem',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.95rem' }}>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Телефон:</span>
+                  <div style={{ fontWeight: 700, color: '#FFFFFF' }}>{selectedProviderModal.phone}</div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Тип аккаунта:</span>
+                  <div style={{ fontWeight: 700, color: 'var(--aquamarine-bright)' }}>{selectedProviderModal.providerType}</div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>ИИН / БИН:</span>
+                  <div style={{ fontWeight: 800, color: selectedProviderModal.taxNumberIin ? '#10B981' : '#F43F5E' }}>
+                    {selectedProviderModal.taxNumberIin || '⚠️ Не указан'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Удостоверение личности:</span>
+                  <div style={{ fontWeight: 700, color: '#FFFFFF' }}>
+                    {selectedProviderModal.idCardNumber || 'Не загружено'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Статус верификации:</span>
+                  <div>
+                    <span className={`badge ${selectedProviderModal.verificationStatus === 'VERIFIED' ? 'badge-emerald' : selectedProviderModal.verificationStatus === 'REJECTED' ? 'badge-red' : 'badge-amber'}`}>
+                      {selectedProviderModal.verificationStatus}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Рейтинг / Выполнено:</span>
+                  <div style={{ fontWeight: 700, color: '#FFFFFF' }}>
+                    ⭐ {(selectedProviderModal.rating / 100).toFixed(1)} ({selectedProviderModal.completedJobs} заказов)
+                  </div>
+                </div>
+              </div>
+
+              {selectedProviderModal.capabilities && selectedProviderModal.capabilities.length > 0 && (
+                <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.75rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Услуги и специализация:</span>
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
+                    {selectedProviderModal.capabilities.map((c) => (
+                      <span key={c} className="badge badge-blue" style={{ fontSize: '0.75rem' }}>{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Block reason input if blocked or blocking */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <label style={{ fontSize: '0.9rem', fontWeight: 700, color: '#FFFFFF' }}>
+                Причина блокировки / Заметка модератора:
+              </label>
+              <input
+                type="text"
+                value={blockReasonInput}
+                onChange={(e) => setBlockReasonInput(e.target.value)}
+                placeholder="Например: Нарушение регламента безопасности или жалоба клиента"
+                className="form-input"
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+              <button
+                type="button"
+                disabled={isUpdatingProvider}
+                onClick={async () => {
+                  setIsUpdatingProvider(true);
+                  await handleVerifyMaster(selectedProviderModal.id, 'VERIFIED');
+                  setIsUpdatingProvider(false);
+                  setSelectedProviderModal(null);
+                  setBlockReasonInput('');
+                }}
+                className="btn btn-emerald touch-manipulation"
+                style={{ minHeight: '52px', fontWeight: 800 }}
+              >
+                {isUpdatingProvider ? <div className="spinner" /> : '✓ Одобрить ИИН'}
+              </button>
+
+              <button
+                type="button"
+                disabled={isUpdatingProvider}
+                onClick={async () => {
+                  setIsUpdatingProvider(true);
+                  await handleVerifyMaster(selectedProviderModal.id, 'REJECTED');
+                  setIsUpdatingProvider(false);
+                  setSelectedProviderModal(null);
+                  setBlockReasonInput('');
+                }}
+                className="btn btn-secondary touch-manipulation"
+                style={{ minHeight: '52px', color: '#F43F5E', borderColor: 'rgba(244, 63, 94, 0.4)' }}
+              >
+                Отклонить
+              </button>
+
+              <button
+                type="button"
+                disabled={isUpdatingProvider}
+                onClick={async () => {
+                  setIsUpdatingProvider(true);
+                  if (selectedProviderModal.isBlocked) {
+                    await handleToggleBlock(selectedProviderModal.id, true);
+                  } else {
+                    if (!adminToken) return;
+                    try {
+                      await fetch(`/api/admin/masters/${selectedProviderModal.id}/verify`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+                        body: JSON.stringify({ isBlocked: true, blockReason: blockReasonInput.trim() || 'Блокировка администратором' }),
+                      });
+                      loadDashboardData();
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }
+                  setIsUpdatingProvider(false);
+                  setSelectedProviderModal(null);
+                  setBlockReasonInput('');
+                }}
+                className="btn btn-secondary touch-manipulation"
+                style={{
+                  minHeight: '52px',
+                  color: selectedProviderModal.isBlocked ? '#10B981' : '#F43F5E',
+                  borderColor: selectedProviderModal.isBlocked ? '#10B981' : '#F43F5E',
+                }}
+              >
+                {selectedProviderModal.isBlocked ? 'Разблокировать' : 'Заблокировать'}
+              </button>
+            </div>
+          </div>
+        </ModalWrapper>
+      )}
+
+      {/* MODAL 2: DISPUTE RESOLUTION MODAL */}
+      {selectedDisputeModal && (
+        <ModalWrapper
+          isOpen={!!selectedDisputeModal}
+          onClose={() => {
+            setSelectedDisputeModal(null);
+            setDisputeNotesInput('');
+          }}
+          isDirty={disputeNotesInput.trim().length > 0}
+          title={`Арбитраж спора #${selectedDisputeModal.id.slice(0, 8)}`}
+          subtitle={`Заказ #${selectedDisputeModal.orderId.slice(0, 8)} • ${selectedDisputeModal.category}`}
+          maxWidth="560px"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div
+              style={{
+                background: 'rgba(244, 63, 94, 0.08)',
+                border: '1px solid rgba(244, 63, 94, 0.3)',
+                padding: '1rem 1.25rem',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <div style={{ fontSize: '0.9rem', color: '#FDA4AF', fontWeight: 600 }}>Претензия заявителя:</div>
+              <div style={{ fontSize: '1.05rem', color: '#FFFFFF', fontWeight: 700, marginTop: '0.25rem' }}>
+                «{selectedDisputeModal.reason}»
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                Клиент: {selectedDisputeModal.openedByPhone} • Исполнитель: {selectedDisputeModal.providerBusinessName}
+              </div>
+            </div>
+
+            {/* Resolution Selector */}
+            <div>
+              <label style={{ fontSize: '0.9rem', fontWeight: 700, color: '#FFFFFF', marginBottom: '0.5rem', display: 'block' }}>
+                Выберите арбитражное решение:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setDisputeResolutionType('RESOLVED_REFUND')}
+                  className={`btn ${disputeResolutionType === 'RESOLVED_REFUND' ? 'btn-primary' : 'btn-secondary'} touch-manipulation`}
+                  style={{ padding: '0.75rem', fontSize: '0.85rem', textAlign: 'center' }}
+                >
+                  ↩️ Возврат клиенту (100%)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDisputeResolutionType('RESOLVED_RELEASE')}
+                  className={`btn ${disputeResolutionType === 'RESOLVED_RELEASE' ? 'btn-primary' : 'btn-secondary'} touch-manipulation`}
+                  style={{ padding: '0.75rem', fontSize: '0.85rem', textAlign: 'center' }}
+                >
+                  💵 Выплата мастеру (100%)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDisputeResolutionType('RESOLVED_SPLIT')}
+                  className={`btn ${disputeResolutionType === 'RESOLVED_SPLIT' ? 'btn-primary' : 'btn-secondary'} touch-manipulation`}
+                  style={{ padding: '0.75rem', fontSize: '0.85rem', textAlign: 'center' }}
+                >
+                  ⚖️ Разделить 50 / 50
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDisputeResolutionType('DISMISSED')}
+                  className={`btn ${disputeResolutionType === 'DISMISSED' ? 'btn-primary' : 'btn-secondary'} touch-manipulation`}
+                  style={{ padding: '0.75rem', fontSize: '0.85rem', textAlign: 'center' }}
+                >
+                  ❌ Отклонить жалобу
+                </button>
+              </div>
+            </div>
+
+            {/* Notes input */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <label style={{ fontSize: '0.9rem', fontWeight: 700, color: '#FFFFFF' }}>
+                Обоснование решения (для протокола):
+              </label>
+              <textarea
+                value={disputeNotesInput}
+                onChange={(e) => setDisputeNotesInput(e.target.value)}
+                placeholder="Укажите факты рассмотрения спора и основание решения..."
+                className="form-input"
+                style={{ width: '100%', minHeight: '80px', resize: 'vertical' }}
+              />
+            </div>
+
+            {/* Submit button */}
+            <button
+              type="button"
+              disabled={isResolvingDispute}
+              onClick={async () => {
+                setIsResolvingDispute(true);
+                await handleResolveDispute(
+                  selectedDisputeModal.id,
+                  disputeResolutionType,
+                  undefined,
+                  disputeNotesInput.trim() || undefined
+                );
+                setIsResolvingDispute(false);
+                setSelectedDisputeModal(null);
+                setDisputeNotesInput('');
+              }}
+              className="btn btn-primary touch-manipulation"
+              style={{ minHeight: '52px', fontSize: '1rem', fontWeight: 800, width: '100%' }}
+            >
+              {isResolvingDispute ? <div className="spinner" /> : '⚡ Вынести арбитражное решение'}
+            </button>
+          </div>
+        </ModalWrapper>
       )}
     </div>
   );
