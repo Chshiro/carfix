@@ -278,4 +278,138 @@ describe('Slice 4: Admin Operations, Live Marketplace Monitor & Provider Verific
       expect(ordersJson.data[0].category).toBe('battery_jumpstart');
     });
   });
+
+  describe('4. Dispatch Map & Active Order Locations (GET /api/admin/dispatch/map)', () => {
+    it('returns active orders with customer and provider coordinates for map clustering', async () => {
+      // 1. Create active order in progress
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 500000, etaMinutes: 10 },
+        mockProvider1
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      await OrderService.updateOrderStatus(selRes.order.id, { status: 'EN_ROUTE' }, mockProvider1);
+
+      const mapReq = new NextRequest('http://localhost/api/admin/dispatch/map', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const { GET: getDispatchMap } = await import('../src/app/api/admin/dispatch/map/route');
+      const mapRes = await getDispatchMap(mapReq);
+      expect(mapRes.status).toBe(200);
+
+      const json = await mapRes.json();
+      expect(json.status).toBe('ok');
+      expect(Array.isArray(json.data.activeOrders)).toBe(true);
+      expect(json.data.activeOrders.length).toBe(1);
+      expect(json.data.activeOrders[0].customer.location.lat).toBe(51.128);
+      expect(json.data.activeOrders[0].customer.location.lng).toBe(71.4305);
+      expect(json.data.activeOrders[0].provider.businessName).toBeDefined();
+    });
+  });
+
+  describe('5. Master Verification Flow & Pending Queue', () => {
+    it('filters pending masters and allows admin verification with audit log', async () => {
+      const { GET: getPendingMasters } = await import('../src/app/api/admin/masters/pending/route');
+      const { PATCH: verifyMaster } = await import('../src/app/api/admin/masters/[id]/verify/route');
+
+      // 1. Check pending masters
+      const pendingReq = new NextRequest('http://localhost/api/admin/masters/pending', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const pendingRes = await getPendingMasters(pendingReq);
+      expect(pendingRes.status).toBe(200);
+      const pendingJson = await pendingRes.json();
+      expect(Array.isArray(pendingJson.data)).toBe(true);
+
+      // 2. Verify Master 1
+      const verifyReq = new NextRequest(`http://localhost/api/admin/masters/${SEED_PROVIDER_1_ID}/verify`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          verificationStatus: 'VERIFIED',
+          verificationLevel: 'LEVEL_1_VERIFIED_SERVICE',
+        }),
+      });
+      const verifyRes = await verifyMaster(verifyReq, { params: { id: SEED_PROVIDER_1_ID } });
+      expect(verifyRes.status).toBe(200);
+      const verifiedJson = await verifyRes.json();
+      expect(verifiedJson.data.verificationStatus).toBe('VERIFIED');
+      expect(verifiedJson.data.verificationLevel).toBe('LEVEL_1_VERIFIED_SERVICE');
+    });
+  });
+
+  describe('6. Dispute Arbitration & Resolution Lifecycle', () => {
+    it('creates dispute and resolves it with refund resolution notes and audit tracking', async () => {
+      const { POST: createDispute, GET: getDisputes } = await import('../src/app/api/admin/disputes/route');
+      const { POST: resolveDispute } = await import('../src/app/api/admin/disputes/[id]/resolve/route');
+
+      // 1. Create order
+      const reqRes = await RequestService.createRequest(
+        { category: 'electrical_starting', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 700000, etaMinutes: 15 },
+        mockProvider1
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      // 2. Customer opens dispute
+      const openReq = new NextRequest('http://localhost/api/admin/disputes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${customerToken}`,
+        },
+        body: JSON.stringify({
+          orderId,
+          reason: 'Мастер не приехал в указанное время ETA',
+        }),
+      });
+      const openRes = await createDispute(openReq);
+      expect(openRes.status).toBe(201);
+      const openJson = await openRes.json();
+      const disputeId = openJson.data.id;
+      expect(disputeId).toBeDefined();
+
+      // 3. Admin views disputes
+      const listReq = new NextRequest('http://localhost/api/admin/disputes', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const listRes = await getDisputes(listReq);
+      expect(listRes.status).toBe(200);
+      const listJson = await listRes.json();
+      expect(listJson.data.some((d: { id: string }) => d.id === disputeId)).toBe(true);
+
+      // 4. Admin resolves dispute with refund
+      const resolveReq = new NextRequest(`http://localhost/api/admin/disputes/${disputeId}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          resolution: 'RESOLVED_REFUND',
+          refundAmountTiyn: 700000,
+          notes: 'Полный возврат средств клиенту из-за срыва ETA',
+        }),
+      });
+      const resolveRes = await resolveDispute(resolveReq, { params: { id: disputeId } });
+      expect(resolveRes.status).toBe(200);
+      const resolveJson = await resolveRes.json();
+      expect(resolveJson.data.status).toBe('RESOLVED_REFUND');
+      expect(resolveJson.data.refundAmountTiyn).toBe(700000);
+      expect(resolveJson.data.resolvedAt).toBeDefined();
+    });
+  });
 });

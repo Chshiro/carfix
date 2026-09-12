@@ -79,6 +79,13 @@ export const providers = pgTable(
     verificationLevel: varchar('verification_level', { length: 50 })
       .default('LEVEL_3_NEW_PROVIDER')
       .notNull(),
+    verificationStatus: varchar('verification_status', { length: 50 })
+      .default('PENDING')
+      .notNull(), // PENDING | VERIFIED | REJECTED
+    idCardNumber: varchar('id_card_number', { length: 50 }),
+    taxNumberIin: varchar('tax_number_iin', { length: 50 }),
+    isBlocked: boolean('is_blocked').default(false).notNull(),
+    blockReason: text('block_reason'),
     description: text('description'),
     rating: integer('rating').default(0).notNull(), // Stored as aggregate * 100
     completedJobs: integer('completed_jobs').default(0).notNull(),
@@ -314,17 +321,153 @@ export const reviews = pgTable(
   ]
 );
 
+// Disputes table (Arbitration & Complaints)
+export const disputes = pgTable(
+  'disputes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    openedByUserId: uuid('opened_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    reason: text('reason').notNull(),
+    status: varchar('status', { length: 50 }).default('OPEN').notNull(), // OPEN | RESOLVED_REFUND | RESOLVED_RELEASE | RESOLVED_SPLIT | DISMISSED
+    resolutionNotes: text('resolution_notes'),
+    refundAmountTiyn: integer('refund_amount_tiyn'),
+    adminId: uuid('admin_id').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('idx_disputes_order').on(table.orderId),
+    index('idx_disputes_status').on(table.status),
+  ]
+);
+
+// Admin audit logs table
+export const adminAuditLogs = pgTable(
+  'admin_audit_logs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    adminId: uuid('admin_id')
+      .notNull()
+      .references(() => users.id),
+    action: varchar('action', { length: 100 }).notNull(), // VERIFY_MASTER | BLOCK_USER | RESOLVE_DISPUTE | CANCEL_ORDER_OVERRIDE | REASSIGN_MASTER
+    entityType: varchar('entity_type', { length: 50 }).notNull(), // PROVIDER | USER | ORDER | DISPUTE
+    entityId: varchar('entity_id', { length: 100 }).notNull(),
+    payload: text('payload'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_admin_audit_admin').on(table.adminId),
+    index('idx_admin_audit_entity').on(table.entityType, table.entityId),
+  ]
+);
+
+// Push subscriptions table (Web Push API)
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dhKey: text('p256dh_key').notNull(),
+    authKey: text('auth_key').notNull(),
+    deviceType: varchar('device_type', { length: 50 }).default('WEB').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_push_subscriptions_user').on(table.userId),
+  ]
+);
+
+// Wallets table (Providers balance accounting)
+export const wallets = pgTable(
+  'wallets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' })
+      .unique(),
+    balanceTiyn: integer('balance_tiyn').default(0).notNull(),
+    frozenTiyn: integer('frozen_tiyn').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check('chk_wallets_balance', sql`${table.balanceTiyn} >= 0`),
+    check('chk_wallets_frozen', sql`${table.frozenTiyn} >= 0`),
+  ]
+);
+
+// Transactions table (Escrow, Hold, Release, Fee, Withdrawal)
+export const transactions = pgTable(
+  'transactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    walletId: uuid('wallet_id')
+      .notNull()
+      .references(() => wallets.id, { onDelete: 'cascade' }),
+    orderId: uuid('order_id').references(() => orders.id, { onDelete: 'set null' }),
+    type: varchar('type', { length: 50 }).notNull(), // HOLD | RELEASE | PLATFORM_FEE | WITHDRAWAL | REFUND
+    amountTiyn: integer('amount_tiyn').notNull(),
+    feeTiyn: integer('fee_tiyn').default(0).notNull(),
+    providerPaymentId: varchar('provider_payment_id', { length: 100 }),
+    status: varchar('status', { length: 50 }).default('SUCCESS').notNull(), // PENDING | SUCCESS | FAILED
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_transactions_wallet').on(table.walletId, table.createdAt),
+    index('idx_transactions_order').on(table.orderId),
+  ]
+);
+
+// Payment invoices table (Customer orders payment status & Kaspi QR)
+export const paymentInvoices = pgTable(
+  'payment_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    amountTiyn: integer('amount_tiyn').notNull(),
+    serviceFeePercent: integer('service_fee_percent').default(12).notNull(),
+    paymentMethod: varchar('payment_method', { length: 50 }).default('KASPI_QR').notNull(), // KASPI_QR | BANK_CARD | CASH
+    status: varchar('status', { length: 50 }).default('AWAITING_PAYMENT').notNull(), // AWAITING_PAYMENT | HELD | CAPTURED | REFUNDED
+    externalQrUrl: text('external_qr_url'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_payment_invoices_order').on(table.orderId),
+    index('idx_payment_invoices_customer').on(table.customerId),
+  ]
+);
+
 // Relations definitions
 export const usersRelations = relations(users, ({ many, one }) => ({
   provider: one(providers, {
     fields: [users.id],
     references: [providers.userId],
   }),
+  wallet: one(wallets, {
+    fields: [users.id],
+    references: [wallets.userId],
+  }),
+  pushSubscriptions: many(pushSubscriptions),
   vehicles: many(vehicles),
   serviceRequests: many(serviceRequests),
   ordersAsCustomer: many(orders, { relationName: 'customerOrders' }),
   reviewsGiven: many(reviews, { relationName: 'reviewsGiven' }),
   reviewsReceived: many(reviews, { relationName: 'reviewsReceived' }),
+  disputesOpened: many(disputes, { relationName: 'disputesOpened' }),
 }));
 
 export const providersRelations = relations(providers, ({ one, many }) => ({
@@ -389,4 +532,52 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   }),
   statusHistory: many(orderStatusHistory),
   reviews: many(reviews),
+  disputes: many(disputes),
+  invoices: many(paymentInvoices),
+}));
+
+export const disputesRelations = relations(disputes, ({ one }) => ({
+  order: one(orders, {
+    fields: [disputes.orderId],
+    references: [orders.id],
+  }),
+  openedByUser: one(users, {
+    fields: [disputes.openedByUserId],
+    references: [users.id],
+    relationName: 'disputesOpened',
+  }),
+  admin: one(users, {
+    fields: [disputes.adminId],
+    references: [users.id],
+  }),
+}));
+
+export const walletsRelations = relations(wallets, ({ one, many }) => ({
+  user: one(users, {
+    fields: [wallets.userId],
+    references: [users.id],
+  }),
+  transactions: many(transactions),
+}));
+
+export const transactionsRelations = relations(transactions, ({ one }) => ({
+  wallet: one(wallets, {
+    fields: [transactions.walletId],
+    references: [wallets.id],
+  }),
+  order: one(orders, {
+    fields: [transactions.orderId],
+    references: [orders.id],
+  }),
+}));
+
+export const paymentInvoicesRelations = relations(paymentInvoices, ({ one }) => ({
+  order: one(orders, {
+    fields: [paymentInvoices.orderId],
+    references: [orders.id],
+  }),
+  customer: one(users, {
+    fields: [paymentInvoices.customerId],
+    references: [users.id],
+  }),
 }));

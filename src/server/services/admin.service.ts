@@ -7,6 +7,8 @@ import {
   providerCapabilities,
   serviceRequests,
   orders,
+  disputes,
+  adminAuditLogs,
 } from '../../db/schema/index';
 import { NotFoundError, ValidationError } from '../errors';
 
@@ -18,6 +20,7 @@ export interface MarketplaceMetrics {
   onlineProvidersCount: number;
   totalProvidersCount: number;
   totalCustomersCount: number;
+  openDisputesCount?: number;
 }
 
 export interface ProviderAdminItem {
@@ -26,10 +29,14 @@ export interface ProviderAdminItem {
   businessName: string;
   providerType: string;
   verificationLevel: string;
+  verificationStatus: string;
+  idCardNumber: string | null;
+  taxNumberIin: string | null;
   rating: number;
   completedJobs: number;
   isOnline: boolean;
   isBlocked: boolean;
+  blockReason: string | null;
   phone: string;
   capabilities: string[];
   createdAt: Date;
@@ -37,7 +44,11 @@ export interface ProviderAdminItem {
 
 export interface UpdateProviderVerificationInput {
   verificationLevel?: 'LEVEL_1_VERIFIED_SERVICE' | 'LEVEL_2_VERIFIED_MASTER' | 'LEVEL_3_NEW_PROVIDER';
+  verificationStatus?: 'PENDING' | 'VERIFIED' | 'REJECTED';
   isBlocked?: boolean;
+  blockReason?: string;
+  notes?: string;
+  adminId?: string;
 }
 
 export interface OrderAdminItem {
@@ -52,6 +63,44 @@ export interface OrderAdminItem {
   providerBusinessName: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface LiveDispatchOrderLocation {
+  orderId: string;
+  requestId: string;
+  status: string;
+  category: string;
+  customer: {
+    id: string;
+    phone: string;
+    location: { lat: number; lng: number };
+  };
+  provider: {
+    id: string;
+    businessName: string;
+    phone: string;
+    location: { lat: number; lng: number } | null;
+    isOnline: boolean;
+  } | null;
+  agreedAmountTiyn: number | null;
+  createdAt: Date;
+}
+
+export interface DisputeAdminItem {
+  id: string;
+  orderId: string;
+  openedByUserId: string;
+  openedByPhone: string;
+  reason: string;
+  status: string;
+  resolutionNotes: string | null;
+  refundAmountTiyn: number | null;
+  adminId: string | null;
+  category: string;
+  providerBusinessName: string;
+  orderStatus: string;
+  createdAt: Date;
+  resolvedAt: Date | null;
 }
 
 export class AdminService {
@@ -104,6 +153,12 @@ export class AdminService {
       .from(users)
       .where(sql`'motorist' = ANY(${users.roles})`);
 
+    // 7. Open Disputes
+    const [openDisp] = await db
+      .select({ count: sql<number>`cast(count(*) as integer)` })
+      .from(disputes)
+      .where(eq(disputes.status, 'OPEN'));
+
     return {
       activeRequestsCount: activeReqs?.count || 0,
       activeOrdersCount: activeOrds?.count || 0,
@@ -112,7 +167,83 @@ export class AdminService {
       onlineProvidersCount: onlineProvs?.count || 0,
       totalProvidersCount: totalProvs?.count || 0,
       totalCustomersCount: totalCusts?.count || 0,
+      openDisputesCount: openDisp?.count || 0,
     };
+  }
+
+  /**
+   * Alias for getMarketplaceMetrics matching Stage 1 requirements.
+   */
+  static async getLiveDispatchMetrics(): Promise<MarketplaceMetrics> {
+    return this.getMarketplaceMetrics();
+  }
+
+  /**
+   * Fetches active orders and requests with GPS coordinates for Dispatch Live Map.
+   */
+  static async getAllActiveOrdersWithLocations(): Promise<LiveDispatchOrderLocation[]> {
+    const activeOrders = await db
+      .select({
+        orderId: orders.id,
+        requestId: orders.requestId,
+        status: orders.status,
+        agreedAmountTiyn: orders.agreedAmountTiyn,
+        createdAt: orders.createdAt,
+        category: serviceRequests.category,
+        requestLocation: serviceRequests.location,
+        customerUserId: users.id,
+        customerPhone: users.phone,
+        providerId: providers.id,
+        providerBusinessName: providers.businessName,
+        providerPhone: sql<string>`(SELECT phone FROM users WHERE users.id = ${providers.userId})`,
+        providerLocation: providerAvailability.location,
+        providerIsOnline: providerAvailability.isOnline,
+      })
+      .from(orders)
+      .innerJoin(serviceRequests, eq(orders.requestId, serviceRequests.id))
+      .innerJoin(users, eq(orders.customerId, users.id))
+      .innerJoin(providers, eq(orders.providerId, providers.id))
+      .leftJoin(providerAvailability, eq(providers.id, providerAvailability.providerId))
+      .where(
+        inArray(orders.status, [
+          'PROVIDER_SELECTED',
+          'EN_ROUTE',
+          'ARRIVED',
+          'IN_PROGRESS',
+        ])
+      )
+      .orderBy(desc(orders.createdAt));
+
+    return activeOrders.map((o) => ({
+      orderId: o.orderId,
+      requestId: o.requestId,
+      status: o.status,
+      category: o.category,
+      customer: {
+        id: o.customerUserId,
+        phone: o.customerPhone,
+        location: {
+          lat: o.requestLocation.lat,
+          lng: o.requestLocation.lng,
+        },
+      },
+      provider: o.providerId
+        ? {
+            id: o.providerId,
+            businessName: o.providerBusinessName,
+            phone: o.providerPhone || '',
+            location: o.providerLocation
+              ? {
+                  lat: o.providerLocation.lat,
+                  lng: o.providerLocation.lng,
+                }
+              : null,
+            isOnline: o.providerIsOnline ?? false,
+          }
+        : null,
+      agreedAmountTiyn: o.agreedAmountTiyn,
+      createdAt: o.createdAt,
+    }));
   }
 
   /**
@@ -120,6 +251,7 @@ export class AdminService {
    */
   static async listProviders(filters?: {
     verificationLevel?: string;
+    verificationStatus?: string;
     isOnline?: boolean;
     isBlocked?: boolean;
   }): Promise<ProviderAdminItem[]> {
@@ -130,6 +262,10 @@ export class AdminService {
         businessName: providers.businessName,
         providerType: providers.providerType,
         verificationLevel: providers.verificationLevel,
+        verificationStatus: providers.verificationStatus,
+        idCardNumber: providers.idCardNumber,
+        taxNumberIin: providers.taxNumberIin,
+        blockReason: providers.blockReason,
         rating: providers.rating,
         completedJobs: providers.completedJobs,
         createdAt: providers.createdAt,
@@ -167,10 +303,14 @@ export class AdminService {
       businessName: p.businessName,
       providerType: p.providerType,
       verificationLevel: p.verificationLevel,
+      verificationStatus: p.verificationStatus,
+      idCardNumber: p.idCardNumber,
+      taxNumberIin: p.taxNumberIin,
       rating: p.rating,
       completedJobs: p.completedJobs,
       isOnline: p.isOnline ?? false,
       isBlocked: p.isBlocked,
+      blockReason: p.blockReason,
       phone: p.phone,
       capabilities: capsByProvider.get(p.id) || [],
       createdAt: p.createdAt,
@@ -178,6 +318,9 @@ export class AdminService {
 
     if (filters?.verificationLevel) {
       result = result.filter((p) => p.verificationLevel === filters.verificationLevel);
+    }
+    if (filters?.verificationStatus) {
+      result = result.filter((p) => p.verificationStatus === filters.verificationStatus);
     }
     if (filters?.isOnline !== undefined) {
       result = result.filter((p) => p.isOnline === filters.isOnline);
@@ -187,6 +330,104 @@ export class AdminService {
     }
 
     return result;
+  }
+
+  /**
+   * Verifies or rejects a master provider profile.
+   */
+  static async verifyMaster(
+    providerId: string,
+    status: 'VERIFIED' | 'REJECTED' | 'PENDING',
+    notes?: string,
+    adminId?: string
+  ): Promise<ProviderAdminItem> {
+    const [provider] = await db
+      .select()
+      .from(providers)
+      .where(eq(providers.id, providerId));
+
+    if (!provider) {
+      throw new NotFoundError(`Provider with ID '${providerId}' not found`);
+    }
+
+    const now = new Date();
+    const verificationLevel =
+      status === 'VERIFIED' ? 'LEVEL_2_VERIFIED_MASTER' : provider.verificationLevel;
+
+    await db
+      .update(providers)
+      .set({
+        verificationStatus: status,
+        verificationLevel,
+        updatedAt: now,
+      })
+      .where(eq(providers.id, providerId));
+
+    if (adminId) {
+      await db.insert(adminAuditLogs).values({
+        adminId,
+        action: 'VERIFY_MASTER',
+        entityType: 'PROVIDER',
+        entityId: providerId,
+        payload: JSON.stringify({ status, notes, verificationLevel }),
+        createdAt: now,
+      });
+    }
+
+    const updated = (await this.listProviders()).find((p) => p.id === providerId);
+    if (!updated) {
+      throw new NotFoundError('Updated provider could not be retrieved');
+    }
+    return updated;
+  }
+
+  /**
+   * Blocks or unblocks a user account (customer or provider).
+   */
+  static async blockUser(
+    userId: string,
+    isBlocked: boolean,
+    reason?: string,
+    adminId?: string
+  ): Promise<void> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId));
+
+    if (!user) {
+      throw new NotFoundError(`User with ID '${userId}' not found`);
+    }
+
+    const now = new Date();
+    await db
+      .update(users)
+      .set({
+        isBlocked,
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId));
+
+    // Also update provider block reason if provider
+    await db
+      .update(providers)
+      .set({
+        isBlocked,
+        blockReason: isBlocked ? reason || 'Заблокирован администратором' : null,
+        updatedAt: now,
+      })
+      .where(eq(providers.userId, userId));
+
+    if (adminId) {
+      await db.insert(adminAuditLogs).values({
+        adminId,
+        action: 'BLOCK_USER',
+        entityType: 'USER',
+        entityId: userId,
+        payload: JSON.stringify({ isBlocked, reason }),
+        createdAt: now,
+      });
+    }
   }
 
   /**
@@ -226,6 +467,16 @@ export class AdminService {
         .where(eq(providers.id, providerId));
     }
 
+    if (input.verificationStatus) {
+      await db
+        .update(providers)
+        .set({
+          verificationStatus: input.verificationStatus,
+          updatedAt: now,
+        })
+        .where(eq(providers.id, providerId));
+    }
+
     if (input.isBlocked !== undefined) {
       await db
         .update(users)
@@ -234,14 +485,147 @@ export class AdminService {
           updatedAt: now,
         })
         .where(eq(users.id, provider.userId));
+
+      await db
+        .update(providers)
+        .set({
+          isBlocked: input.isBlocked,
+          blockReason: input.blockReason || null,
+          updatedAt: now,
+        })
+        .where(eq(providers.id, providerId));
     }
 
-    const [updatedList] = await this.listProviders();
+    if (input.adminId) {
+      await db.insert(adminAuditLogs).values({
+        adminId: input.adminId,
+        action: 'VERIFY_MASTER',
+        entityType: 'PROVIDER',
+        entityId: providerId,
+        payload: JSON.stringify(input),
+        createdAt: now,
+      });
+    }
+
     const updated = (await this.listProviders()).find((p) => p.id === providerId);
     if (!updated) {
       throw new NotFoundError('Updated provider could not be retrieved');
     }
 
+    return updated;
+  }
+
+  /**
+   * Creates a dispute for an order.
+   */
+  static async createDispute(
+    orderId: string,
+    openedByUserId: string,
+    reason: string
+  ): Promise<string> {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId));
+
+    if (!order) {
+      throw new NotFoundError(`Order with ID '${orderId}' not found`);
+    }
+
+    const [created] = await db
+      .insert(disputes)
+      .values({
+        orderId,
+        openedByUserId,
+        reason,
+        status: 'OPEN',
+      })
+      .returning({ id: disputes.id });
+
+    return created.id;
+  }
+
+  /**
+   * Lists disputes with related order, customer, and provider information.
+   */
+  static async listDisputes(statusFilter?: string): Promise<DisputeAdminItem[]> {
+    const rows = await db
+      .select({
+        id: disputes.id,
+        orderId: disputes.orderId,
+        openedByUserId: disputes.openedByUserId,
+        openedByPhone: users.phone,
+        reason: disputes.reason,
+        status: disputes.status,
+        resolutionNotes: disputes.resolutionNotes,
+        refundAmountTiyn: disputes.refundAmountTiyn,
+        adminId: disputes.adminId,
+        createdAt: disputes.createdAt,
+        resolvedAt: disputes.resolvedAt,
+        category: serviceRequests.category,
+        providerBusinessName: providers.businessName,
+        orderStatus: orders.status,
+      })
+      .from(disputes)
+      .innerJoin(users, eq(disputes.openedByUserId, users.id))
+      .innerJoin(orders, eq(disputes.orderId, orders.id))
+      .innerJoin(serviceRequests, eq(orders.requestId, serviceRequests.id))
+      .innerJoin(providers, eq(orders.providerId, providers.id))
+      .orderBy(desc(disputes.createdAt));
+
+    if (statusFilter && statusFilter !== 'ALL') {
+      return rows.filter((r) => r.status === statusFilter);
+    }
+    return rows;
+  }
+
+  /**
+   * Resolves a dispute with atomic status updates and audit logging.
+   */
+  static async resolveDispute(
+    disputeId: string,
+    resolution: 'RESOLVED_REFUND' | 'RESOLVED_RELEASE' | 'RESOLVED_SPLIT' | 'DISMISSED',
+    refundAmountTiyn?: number,
+    notes?: string,
+    adminId?: string
+  ): Promise<DisputeAdminItem> {
+    const [dispute] = await db
+      .select()
+      .from(disputes)
+      .where(eq(disputes.id, disputeId));
+
+    if (!dispute) {
+      throw new NotFoundError(`Dispute with ID '${disputeId}' not found`);
+    }
+
+    const now = new Date();
+    await db
+      .update(disputes)
+      .set({
+        status: resolution,
+        resolutionNotes: notes || null,
+        refundAmountTiyn: refundAmountTiyn ?? null,
+        adminId: adminId || null,
+        resolvedAt: now,
+      })
+      .where(eq(disputes.id, disputeId));
+
+    if (adminId) {
+      await db.insert(adminAuditLogs).values({
+        adminId,
+        action: 'RESOLVE_DISPUTE',
+        entityType: 'DISPUTE',
+        entityId: disputeId,
+        payload: JSON.stringify({ resolution, refundAmountTiyn, notes }),
+        createdAt: now,
+      });
+    }
+
+    const all = await this.listDisputes();
+    const updated = all.find((d) => d.id === disputeId);
+    if (!updated) {
+      throw new NotFoundError('Resolved dispute could not be retrieved');
+    }
     return updated;
   }
 

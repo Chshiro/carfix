@@ -10,6 +10,12 @@ import {
   orders,
   orderStatusHistory,
   reviews,
+  disputes,
+  adminAuditLogs,
+  pushSubscriptions,
+  wallets,
+  transactions,
+  paymentInvoices,
 } from './schema/index';
 
 export const SEED_CUSTOMER_ID = 'c0000000-0000-0000-0000-000000000001';
@@ -69,6 +75,12 @@ export async function seedDatabase() {
   console.info('🌱 Seeding database with Astana development data...');
 
   // Clean existing tables in reverse dependency order
+  await db.delete(disputes);
+  await db.delete(adminAuditLogs);
+  await db.delete(pushSubscriptions);
+  await db.delete(paymentInvoices);
+  await db.delete(transactions);
+  await db.delete(wallets);
   await db.delete(reviews);
   await db.delete(orderStatusHistory);
   await db.delete(orders);
