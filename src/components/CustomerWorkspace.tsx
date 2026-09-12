@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AstanaMap, { ASTANA_LANDMARKS, MapCoords, ProviderPin } from './AstanaMap';
+import { useCustomerSession } from '../lib/useCustomerSession';
 
 export type ServiceCategory = 'electrical_starting' | 'battery_jumpstart' | 'mobile_mechanic';
 export type PricingMode = 'fixed' | 'diagnostic_fee' | 'estimate_range';
@@ -39,6 +40,7 @@ export interface OrderResult {
     businessName: string;
     providerType: string;
     rating: number;
+    phone?: string;
   };
   offer: {
     id: string;
@@ -47,8 +49,47 @@ export interface OrderResult {
     minAmountTiyn: number | null;
     maxAmountTiyn: number | null;
     etaMinutes: number;
+    message?: string | null;
   };
 }
+
+export interface CustomerHistoryOrder {
+  id: string;
+  requestId: string;
+  status: string;
+  category: string;
+  description: string | null;
+  agreedPricingMode: string;
+  agreedAmountTiyn: number | null;
+  finalAmountTiyn: number | null;
+  cancellationReason: string | null;
+  provider: {
+    id: string;
+    businessName: string;
+    providerType: string;
+    rating: number;
+    phone: string;
+  };
+  review: {
+    rating: number;
+    comment: string | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const POPULAR_ASTANA_CARS = [
+  'Toyota Camry (XV70)',
+  'Hyundai Tucson',
+  'Kia Sportage',
+  'Chevrolet Cobalt',
+  'Lexus RX 350',
+  'Hyundai Accent / Solaris',
+  'Toyota Land Cruiser Prado',
+  'BMW 5 Series',
+  'Mercedes-Benz E-Class',
+  'Другой автомобиль',
+];
 
 interface CustomerWorkspaceProps {
   token: string | null;
@@ -60,37 +101,119 @@ interface CustomerWorkspaceProps {
 }
 
 export default function CustomerWorkspace({
-  token,
+  token: initialToken,
   createdRequestId,
   setCreatedRequestId,
   selectedOrderResult,
   setSelectedOrderResult,
   onlineProviders,
 }: CustomerWorkspaceProps) {
+  // 1. Session & Auth (Phase 1)
+  const {
+    token: sessionToken,
+    user: sessionUser,
+    activeState,
+    loginWithPhone,
+  } = useCustomerSession();
+
+  const activeAuthToken = sessionToken || initialToken;
+
+  // 2. Request Form State
   const [category, setCategory] = useState<ServiceCategory>('electrical_starting');
+  const [selectedVehicle, setSelectedVehicle] = useState<string>(POPULAR_ASTANA_CARS[0]);
+  const [customVehicle, setCustomVehicle] = useState<string>('');
   const [coords, setCoords] = useState<MapCoords>({ lat: 51.1283, lng: 71.4305 });
   const [locationName, setLocationName] = useState<string>('Монумент Байтерек (Левый берег)');
   const [description, setDescription] = useState<string>('');
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
-  const [matchedCount, setMatchedCount] = useState<number | null>(null);
   const [offers, setOffers] = useState<OfferItem[]>([]);
   const [selectingOfferId, setSelectingOfferId] = useState<string | null>(null);
 
-  // Review & Rating State
+  // 3. Toasts & Notifications (Phase 5)
+  const [toasts, setToasts] = useState<Array<{ id: string; text: string; icon?: string }>>([]);
+  const addToast = useCallback((text: string, icon: string = '⚡') => {
+    const id = Math.random().toString(36).substring(7);
+    setToasts((prev) => [...prev, { id, text, icon }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
+  // 4. Modals: Phone Auth & Order History (Phase 1 & Phase 4)
+  const [showPhoneModal, setShowPhoneModal] = useState<boolean>(false);
+  const [phoneInput, setPhoneInput] = useState<string>('+7 (701) 111-22-33');
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
+  const [historyOrders, setHistoryOrders] = useState<CustomerHistoryOrder[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
+
+  // 5. Review & Rating State (Phase 3)
   const [reviewRating, setReviewRating] = useState<number>(5);
   const [reviewComment, setReviewComment] = useState<string>('Отличная работа, мастер приехал вовремя!');
   const [isSubmittingReview, setIsSubmittingReview] = useState<boolean>(false);
   const [reviewSubmitted, setReviewSubmitted] = useState<boolean>(false);
 
-  // Cancel Modal State
+  // 6. Cancel Modal State (Phase 3)
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [cancelReason, setCancelReason] = useState<string>('Машина завелась сама');
+
+  // Track previous status to trigger Toasts on status transitions
+  const prevOrderStatusRef = useRef<string | null>(null);
+  const prevOffersCountRef = useRef<number>(0);
+
+  // Hydrate active state from useCustomerSession when activeState arrives
+  useEffect(() => {
+    if (!activeState) return;
+
+    if (activeState.type === 'ORDER' && activeState.order && activeState.provider && activeState.offer) {
+      setSelectedOrderResult({
+        order: {
+          id: activeState.order.id,
+          status: activeState.order.status,
+          agreedPricingMode: activeState.order.agreedPricingMode,
+          agreedAmountTiyn: activeState.order.agreedAmountTiyn,
+          agreedMinTiyn: activeState.order.agreedMinTiyn,
+          agreedMaxTiyn: activeState.order.agreedMaxTiyn,
+          finalAmountTiyn: activeState.order.finalAmountTiyn,
+          cancellationReason: activeState.order.cancellationReason,
+        },
+        provider: {
+          id: activeState.provider.id,
+          businessName: activeState.provider.businessName,
+          providerType: activeState.provider.providerType,
+          rating: activeState.provider.rating,
+          phone: activeState.provider.phone,
+        },
+        offer: {
+          id: activeState.offer.id,
+          pricingMode: activeState.offer.pricingMode,
+          amountTiyn: activeState.offer.amountTiyn,
+          minAmountTiyn: activeState.offer.minAmountTiyn,
+          maxAmountTiyn: activeState.offer.maxAmountTiyn,
+          etaMinutes: activeState.offer.etaMinutes,
+          message: activeState.offer.message,
+        },
+      });
+      if (activeState.request) {
+        setCreatedRequestId(activeState.request.id);
+      }
+      if (activeState.reviewSubmitted) {
+        setReviewSubmitted(true);
+      }
+    } else if (activeState.type === 'REQUEST' && activeState.request) {
+      setCreatedRequestId(activeState.request.id);
+      if (activeState.offers) {
+        setOffers(activeState.offers);
+      }
+    }
+  }, [activeState, setCreatedRequestId, setSelectedOrderResult]);
 
   // Geolocation Handler
   const handleGetLocation = () => {
     if (!navigator.geolocation) {
-      alert('Геолокация не поддерживается вашим браузером');
+      addToast('Геолокация не поддерживается вашим браузером', '⚠️');
       return;
     }
     setIsLocating(true);
@@ -98,11 +221,12 @@ export default function CustomerWorkspace({
       (pos) => {
         const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setCoords(newCoords);
-        setLocationName(`Текущая геопозиция: ${newCoords.lat.toFixed(4)}, ${newCoords.lng.toFixed(4)}`);
+        setLocationName(`Координаты: ${newCoords.lat.toFixed(4)}, ${newCoords.lng.toFixed(4)}`);
         setIsLocating(false);
+        addToast('Геопозиция успешно определена', '📍');
       },
       (err) => {
-        alert(`Не удалось определить геопозицию (${err.message}). Используем Астану.`);
+        addToast(`Не удалось определить геопозицию (${err.message})`, '⚠️');
         setIsLocating(false);
       }
     );
@@ -110,57 +234,71 @@ export default function CustomerWorkspace({
 
   // Create Service Request
   const handleCreateRequest = async () => {
-    if (!token) {
-      alert('Авторизация в демо-режиме не готова');
+    if (!activeAuthToken) {
+      setShowPhoneModal(true);
       return;
     }
     setIsPublishing(true);
+
+    const vehicleTitle = selectedVehicle === 'Другой автомобиль'
+      ? (customVehicle.trim() || 'Легковой автомобиль')
+      : selectedVehicle;
+
+    const fullDescription = [
+      `Авто: ${vehicleTitle}`,
+      description.trim() ? `Проблема: ${description.trim()}` : '',
+    ].filter(Boolean).join('\n');
+
     try {
       const res = await fetch('/api/requests', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${activeAuthToken}`,
         },
         body: JSON.stringify({
           category,
           location: coords,
-          description: description ? description.trim() : undefined,
+          description: fullDescription,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.status === 'ok') {
         setCreatedRequestId(data.data.requestId);
-        setMatchedCount(data.data.matchedProvidersCount);
         setOffers([]);
         setSelectedOrderResult(null);
         setReviewSubmitted(false);
+        addToast('Заявка опубликована! Ищем мастеров в радиусе 5 км...', '📡');
       } else {
-        alert(`Ошибка создания заявки: ${data.error?.message || 'Неизвестная ошибка'}`);
+        addToast(`Ошибка создания заявки: ${data.error?.message || 'Сбой'}`, '❌');
       }
     } catch (e: unknown) {
-      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      addToast(`Сбой сети: ${e instanceof Error ? e.message : 'Error'}`, '❌');
     } finally {
       setIsPublishing(false);
     }
   };
 
-  // Poll Offers for Created Request
+  // Phase 2: Live Radar Auto-Polling for Offers (every 3 seconds)
   const fetchOffers = useCallback(async () => {
-    if (!createdRequestId || !token || selectedOrderResult) return;
+    if (!createdRequestId || !activeAuthToken || selectedOrderResult) return;
     try {
       const res = await fetch(`/api/requests/${createdRequestId}/offers`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${activeAuthToken}` },
       });
       const data = await res.json();
-      if (res.ok && data.status === 'ok') {
+      if (res.ok && data.status === 'ok' && Array.isArray(data.data)) {
         setOffers(data.data);
+        if (data.data.length > prevOffersCountRef.current) {
+          addToast(`Поступило новое предложение от мастера! (${data.data.length})`, '⚡');
+        }
+        prevOffersCountRef.current = data.data.length;
       }
     } catch (e) {
-      console.error('Error fetching offers:', e);
+      console.error('Error polling offers:', e);
     }
-  }, [createdRequestId, token, selectedOrderResult]);
+  }, [createdRequestId, activeAuthToken, selectedOrderResult, addToast]);
 
   useEffect(() => {
     if (!createdRequestId || selectedOrderResult) return;
@@ -169,26 +307,38 @@ export default function CustomerWorkspace({
     return () => clearInterval(interval);
   }, [createdRequestId, selectedOrderResult, fetchOffers]);
 
-  // Poll Latest Order Status when Order exists
+  // Phase 2: Live Status Auto-Polling for Active Order (every 2.5 seconds)
   const selectedOrderId = selectedOrderResult?.order.id;
 
   useEffect(() => {
-    if (!selectedOrderId || !token) return;
+    if (!selectedOrderId || !activeAuthToken) return;
 
     const pollOrder = async () => {
       try {
         const res = await fetch(`/api/orders/${selectedOrderId}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${activeAuthToken}` },
         });
         const data = await res.json();
         if (res.ok && data.status === 'ok' && data.data?.order) {
+          const newStatus = data.data.order.status;
+
+          // Status Change Toasts
+          if (prevOrderStatusRef.current && prevOrderStatusRef.current !== newStatus) {
+            if (newStatus === 'EN_ROUTE') addToast('🚗 Мастер выехал к вашему автомобилю!', '🚗');
+            if (newStatus === 'ARRIVED') addToast('📍 Мастер прибыл на место встречи!', '📍');
+            if (newStatus === 'IN_PROGRESS') addToast('🔧 Мастер приступил к ремонту!', '🔧');
+            if (newStatus === 'COMPLETED') addToast('🎉 Заказ успешно завершен! Пожалуйста, оставьте отзыв', '⭐');
+            if (newStatus === 'CANCELLED') addToast('✕ Заказ отменен', '⚠️');
+          }
+          prevOrderStatusRef.current = newStatus;
+
           setSelectedOrderResult((prev) =>
             prev
               ? {
                   ...prev,
                   order: {
                     ...prev.order,
-                    status: data.data.order.status,
+                    status: newStatus,
                     finalAmountTiyn: data.data.order.finalAmountTiyn,
                     cancellationReason: data.data.order.cancellationReason,
                   },
@@ -197,25 +347,25 @@ export default function CustomerWorkspace({
           );
         }
       } catch (e) {
-        console.error('Error polling order:', e);
+        console.error('Error polling order status:', e);
       }
     };
 
     pollOrder();
     const interval = setInterval(pollOrder, 2500);
     return () => clearInterval(interval);
-  }, [selectedOrderId, token, setSelectedOrderResult]);
+  }, [selectedOrderId, activeAuthToken, setSelectedOrderResult, addToast]);
 
-  // Select Master Offer
+  // Phase 3: Select Offer Action
   const handleSelectOffer = async (offerId: string) => {
-    if (!createdRequestId || !token) return;
+    if (!createdRequestId || !activeAuthToken) return;
     setSelectingOfferId(offerId);
     try {
       const res = await fetch(`/api/requests/${createdRequestId}/select`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${activeAuthToken}`,
         },
         body: JSON.stringify({ offerId }),
       });
@@ -223,26 +373,27 @@ export default function CustomerWorkspace({
       const data = await res.json();
       if (res.ok && data.status === 'ok') {
         setSelectedOrderResult(data.data as OrderResult);
+        addToast('Мастер успешно выбран! Заказ оформлен', '✓');
       } else {
-        alert(`Ошибка выбора мастера: ${data.error?.message || 'Сбой'}`);
+        addToast(`Ошибка выбора мастера: ${data.error?.message || 'Сбой'}`, '❌');
       }
     } catch (e: unknown) {
-      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      addToast(`Сбой сети: ${e instanceof Error ? e.message : 'Error'}`, '❌');
     } finally {
       setSelectingOfferId(null);
     }
   };
 
-  // Submit Review for Completed Order
+  // Phase 3: Direct Review Submission
   const handleSubmitReview = async () => {
-    if (!selectedOrderResult || !token) return;
+    if (!selectedOrderResult || !activeAuthToken) return;
     setIsSubmittingReview(true);
     try {
       const res = await fetch(`/api/orders/${selectedOrderResult.order.id}/reviews`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${activeAuthToken}`,
         },
         body: JSON.stringify({
           rating: reviewRating,
@@ -253,21 +404,22 @@ export default function CustomerWorkspace({
       const data = await res.json();
       if (res.ok && data.status === 'ok') {
         setReviewSubmitted(true);
+        addToast('Спасибо за оценку! Отзыв сохранен', '⭐');
       } else {
-        alert(`Ошибка отправки отзыва: ${data.error?.message || 'Сбой'}`);
+        addToast(`Ошибка отправки отзыва: ${data.error?.message || 'Сбой'}`, '❌');
       }
     } catch (e: unknown) {
-      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      addToast(`Сбой сети: ${e instanceof Error ? e.message : 'Error'}`, '❌');
     } finally {
       setIsSubmittingReview(false);
     }
   };
 
-  // Cancel Order
+  // Phase 3: Cancel Order Action
   const handleCancelOrder = async () => {
-    if (!selectedOrderResult || !token) return;
+    if (!selectedOrderResult || !activeAuthToken) return;
     if (!cancelReason.trim()) {
-      alert('Укажите причину отмены');
+      addToast('Укажите причину отмены', '⚠️');
       return;
     }
     setIsCancelling(true);
@@ -276,7 +428,7 @@ export default function CustomerWorkspace({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${activeAuthToken}`,
         },
         body: JSON.stringify({
           status: 'CANCELLED',
@@ -298,21 +450,127 @@ export default function CustomerWorkspace({
               }
             : null
         );
+        addToast('Заказ успешно отменен', '✓');
       } else {
-        alert(`Ошибка отмены заказа: ${data.error?.message || 'Сбой'}`);
+        addToast(`Ошибка отмены: ${data.error?.message || 'Сбой'}`, '❌');
       }
     } catch (e: unknown) {
-      alert(`Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      addToast(`Сбой сети: ${e instanceof Error ? e.message : 'Error'}`, '❌');
     } finally {
       setIsCancelling(false);
     }
   };
 
+  // Phase 4: Fetch Order History
+  const handleOpenHistory = async () => {
+    setShowHistoryModal(true);
+    if (!activeAuthToken) return;
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch('/api/customer/orders', {
+        headers: { Authorization: `Bearer ${activeAuthToken}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        setHistoryOrders(data.data);
+      }
+    } catch (e) {
+      console.error('Error fetching history:', e);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  // Phone Login Submit
+  const handlePhoneSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!phoneInput.trim()) return;
+    setIsLoggingIn(true);
+    try {
+      await loginWithPhone(phoneInput.trim());
+      setShowPhoneModal(false);
+      addToast(`Успешный вход в аккаунт ${phoneInput.trim()}`, '📱');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка входа', '❌');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   const currentStatus = selectedOrderResult?.order.status;
+  const masterPhone = selectedOrderResult?.provider.phone || '+77011110001';
+  const cleanMasterPhone = masterPhone.replace(/\D/g, '');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* 1. ACTIVE ORDER CONFIRMED VIEW & FSM TRACKER */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
+      {/* TOASTS CONTAINER (Phase 5) */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className="toast-item">
+            <span>{toast.icon}</span>
+            <span>{toast.text}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* 0. CUSTOMER TOP PROFILE & HISTORY BAR (Phase 1 & 4) */}
+      <div
+        className="glass-card"
+        style={{
+          padding: '0.85rem 1.25rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '0.75rem',
+          background: 'rgba(15, 23, 42, 0.75)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #3b82f6 0%, #10b981 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '0.9rem',
+              fontWeight: 700,
+            }}
+          >
+            🚗
+          </div>
+          <div>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>
+              {sessionUser?.phone || '+7 (701) 111-22-33'}
+            </div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              Клиентский профиль • Астана
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            onClick={handleOpenHistory}
+            className="btn btn-secondary"
+            style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem' }}
+          >
+            📋 Мои заказы
+          </button>
+          <button
+            onClick={() => setShowPhoneModal(true)}
+            className="btn btn-secondary"
+            style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem' }}
+          >
+            📱 Сменить номер
+          </button>
+        </div>
+      </div>
+
+      {/* 1. ACTIVE ORDER CONFIRMED VIEW & DIRECT DISPATCH CARD (Phase 3) */}
       {selectedOrderResult ? (
         <div className="glass-card" style={{ padding: '2rem', border: '1px solid rgba(16, 185, 129, 0.4)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
@@ -348,429 +606,646 @@ export default function CustomerWorkspace({
               </p>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID Заказа</div>
-              <code style={{ fontSize: '0.85rem', color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
-                {selectedOrderResult.order.id.slice(0, 8)}...
-              </code>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Сумма к оплате</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--emerald)' }}>
+                {selectedOrderResult.order.finalAmountTiyn
+                  ? `${(selectedOrderResult.order.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                  : selectedOrderResult.order.agreedAmountTiyn
+                  ? `${(selectedOrderResult.order.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                  : 'По прайсу'}
+              </div>
             </div>
           </div>
 
-          {/* STATUS STEPPER PROGRESS BAR */}
-          {currentStatus !== 'CANCELLED' && (
-            <div style={{ display: 'flex', gap: '0.5rem', margin: '1.25rem 0', flexWrap: 'wrap' }}>
-              {[
-                { id: 'PROVIDER_SELECTED', label: '1. Выбран' },
-                { id: 'EN_ROUTE', label: '2. В пути' },
-                { id: 'ARRIVED', label: '3. Прибыл' },
-                { id: 'IN_PROGRESS', label: '4. В работе' },
-                { id: 'COMPLETED', label: '5. Завершен' },
-              ].map((step, idx) => {
-                const stepOrder = ['PROVIDER_SELECTED', 'EN_ROUTE', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'];
-                const currentIdx = stepOrder.indexOf(currentStatus || 'PROVIDER_SELECTED');
-                const isPassed = currentIdx >= idx;
-                const isCurrent = currentIdx === idx;
-
-                return (
-                  <div
-                    key={step.id}
-                    style={{
-                      flex: '1 1 120px',
-                      padding: '0.6rem 0.8rem',
-                      borderRadius: 'var(--radius-sm)',
-                      background: isCurrent
-                        ? 'rgba(59, 130, 246, 0.25)'
-                        : isPassed
-                        ? 'rgba(16, 185, 129, 0.15)'
-                        : 'rgba(15, 23, 42, 0.5)',
-                      border: isCurrent
-                        ? '1px solid var(--primary)'
-                        : isPassed
-                        ? '1px solid rgba(16, 185, 129, 0.4)'
-                        : '1px solid var(--border-subtle)',
-                      textAlign: 'center',
-                    }}
-                  >
-                    <div style={{ fontSize: '0.8rem', fontWeight: 700, color: isCurrent ? '#93c5fd' : isPassed ? '#34d399' : '#64748b' }}>
-                      {step.label}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* ORDER DETAILS SUMMARY */}
+          {/* MASTER DIRECT DISPATCH CARD (Phase 3) */}
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '1rem',
-              margin: '1.25rem 0',
+              marginTop: '1.5rem',
               padding: '1.25rem',
-              background: 'rgba(15, 23, 42, 0.7)',
+              background: 'rgba(15, 23, 42, 0.8)',
               borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
+              border: '1px solid var(--border-accent)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
             }}
           >
-            <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Исполнитель</div>
-              <div style={{ fontWeight: 700, fontSize: '1.1rem', marginTop: '0.2rem' }}>
-                {selectedOrderResult.provider.businessName}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div
+                style={{
+                  width: '54px',
+                  height: '54px',
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #10b981 0%, #3b82f6 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.6rem',
+                  boxShadow: '0 0 15px rgba(16, 185, 129, 0.4)',
+                }}
+              >
+                👨‍🔧
               </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--amber)', marginTop: '0.2rem' }}>
-                ⭐ {selectedOrderResult.provider.rating.toFixed(1)} Рейтинг
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <h4 style={{ fontWeight: 800, fontSize: '1.1rem' }}>
+                    {selectedOrderResult.provider.businessName}
+                  </h4>
+                  <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
+                    ✓ Верифицирован
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                  ⭐ {((selectedOrderResult.provider.rating || 490) / 100).toFixed(1)} • {selectedOrderResult.provider.providerType}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--emerald)', marginTop: '0.15rem' }}>
+                  ⏱️ Время прибытия: ~{selectedOrderResult.offer.etaMinutes || 15} минут
+                </div>
               </div>
             </div>
 
-            <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                {currentStatus === 'COMPLETED' ? 'Итоговая стоимость' : 'Согласованная стоимость'}
+            {/* DIRECT CALL & WHATSAPP BUTTONS (Phase 3) */}
+            {currentStatus !== 'CANCELLED' && currentStatus !== 'COMPLETED' && (
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <a
+                  href={`tel:${cleanMasterPhone}`}
+                  className="btn btn-emerald"
+                  style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                >
+                  📞 Позвонить
+                </a>
+                <a
+                  href={`https://wa.me/${cleanMasterPhone}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-secondary"
+                  style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#25D366', color: '#25D366' }}
+                >
+                  💬 WhatsApp
+                </a>
               </div>
-              <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#34d399', marginTop: '0.2rem' }}>
-                {selectedOrderResult.order.finalAmountTiyn
-                  ? `${(selectedOrderResult.order.finalAmountTiyn / 100).toLocaleString()} ₸ (Оплачено)`
-                  : selectedOrderResult.offer.pricingMode === 'fixed'
-                  ? `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸`
-                  : selectedOrderResult.offer.pricingMode === 'diagnostic_fee'
-                  ? `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸ (Диагностика)`
-                  : `${((selectedOrderResult.offer.minAmountTiyn || 0) / 100).toLocaleString()}–${((selectedOrderResult.offer.maxAmountTiyn || 0) / 100).toLocaleString()} ₸`}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Оплата на месте</div>
-            </div>
+            )}
+          </div>
 
-            <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Расчетное время (ETA)</div>
-              <div style={{ fontWeight: 700, fontSize: '1.1rem', marginTop: '0.2rem' }}>
-                ~ {selectedOrderResult.offer.etaMinutes} минут
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>По дорогам Астаны</div>
+          {/* STATUS TIMELINE BAR */}
+          <div style={{ marginTop: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+              <span style={{ color: currentStatus ? 'var(--primary)' : 'inherit', fontWeight: 600 }}>1. Назначен</span>
+              <span style={{ color: ['EN_ROUTE', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(currentStatus || '') ? 'var(--primary)' : 'inherit', fontWeight: 600 }}>2. В пути</span>
+              <span style={{ color: ['ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(currentStatus || '') ? 'var(--primary)' : 'inherit', fontWeight: 600 }}>3. На месте</span>
+              <span style={{ color: ['IN_PROGRESS', 'COMPLETED'].includes(currentStatus || '') ? 'var(--primary)' : 'inherit', fontWeight: 600 }}>4. Ремонт</span>
+              <span style={{ color: currentStatus === 'COMPLETED' ? 'var(--emerald)' : 'inherit', fontWeight: 600 }}>5. Завершен</span>
+            </div>
+            <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  background: currentStatus === 'COMPLETED' ? 'var(--emerald)' : 'linear-gradient(90deg, #3b82f6, #10b981)',
+                  width:
+                    currentStatus === 'PROVIDER_SELECTED' ? '20%' :
+                    currentStatus === 'EN_ROUTE' ? '40%' :
+                    currentStatus === 'ARRIVED' ? '60%' :
+                    currentStatus === 'IN_PROGRESS' ? '80%' :
+                    currentStatus === 'COMPLETED' ? '100%' : '0%',
+                  transition: 'width 0.4s ease',
+                }}
+              />
             </div>
           </div>
 
-          {/* REVIEW FORM ON ORDER COMPLETION */}
+          {/* REVIEW FORM FOR COMPLETED ORDER (Phase 3) */}
           {currentStatus === 'COMPLETED' && (
-            <div
-              style={{
-                background: 'rgba(16, 185, 129, 0.08)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                borderRadius: 'var(--radius-md)',
-                padding: '1.25rem',
-                margin: '1.25rem 0',
-              }}
-            >
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem', color: '#34d399' }}>
-                ⭐ Оцените работу мастера
+            <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'rgba(16, 185, 129, 0.08)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem' }}>
+                🌟 Оцените качество работы мастера
               </h3>
-
               {reviewSubmitted ? (
-                <div style={{ color: '#34d399', fontWeight: 700, fontSize: '0.95rem' }}>
-                  ✓ Спасибо! Ваш отзыв учтен и рейтинг мастера обновлен.
+                <div style={{ padding: '1rem', background: 'rgba(16, 185, 129, 0.2)', borderRadius: 'var(--radius-sm)', color: '#6ee7b7', fontWeight: 600 }}>
+                  ✓ Спасибо! Ваш отзыв успешно сохранен и влияет на рейтинг мастера в Астане.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Ваша оценка:</span>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setReviewRating(star)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          fontSize: '1.5rem',
-                          cursor: 'pointer',
-                          color: star <= reviewRating ? '#f59e0b' : '#475569',
-                          transition: 'transform 0.1s',
-                        }}
-                      >
-                        ★
-                      </button>
-                    ))}
-                    <span style={{ fontWeight: 700, color: '#f59e0b' }}>{reviewRating} из 5</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                      Ваша оценка (1-5 звезд):
+                    </label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setReviewRating(star)}
+                          style={{
+                            background: reviewRating >= star ? 'var(--amber)' : 'rgba(255,255,255,0.1)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '0.5rem 1rem',
+                            fontSize: '1.2rem',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          ⭐ {star}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <input
-                    type="text"
-                    value={reviewComment}
-                    onChange={(e) => setReviewComment(e.target.value)}
-                    placeholder="Напишите пару слов о мастере..."
-                    className="form-input"
-                  />
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                      Комментарий к отзыву:
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={reviewComment}
+                      onChange={(e) => setReviewComment(e.target.value)}
+                      placeholder="Напишите пару слов о скорости и качестве..."
+                    />
+                  </div>
 
                   <button
                     onClick={handleSubmitReview}
                     disabled={isSubmittingReview}
-                    className="btn-emerald"
+                    className="btn btn-emerald"
                     style={{ alignSelf: 'flex-start' }}
                   >
-                    {isSubmittingReview ? 'Отправка...' : 'Отправить отзыв'}
+                    {isSubmittingReview ? 'Сохранение...' : 'Отправить отзыв'}
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* ACTIONS BAR */}
-          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-            {currentStatus !== 'COMPLETED' && currentStatus !== 'CANCELLED' && (
-              <>
+          {/* CANCEL ORDER BUTTON (Phase 3) */}
+          {currentStatus !== 'COMPLETED' && currentStatus !== 'CANCELLED' && (
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Причина отмены..."
+                  style={{ width: '220px', padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}
+                />
                 <button
-                  onClick={() => alert('Прямой звонок мастеру: +7 (702) 111-22-33')}
-                  className="btn-primary"
-                  style={{ flex: '1 1 180px' }}
+                  onClick={handleCancelOrder}
+                  disabled={isCancelling}
+                  className="btn btn-secondary"
+                  style={{ borderColor: '#ef4444', color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.8rem' }}
                 >
-                  📞 Позвонить мастеру
+                  {isCancelling ? 'Отмена...' : '✕ Отменить заказ'}
                 </button>
-                <button
-                  onClick={() => alert('Открытие чата WhatsApp с мастером')}
-                  className="btn-emerald"
-                  style={{ flex: '1 1 180px' }}
-                >
-                  💬 Написать в WhatsApp
-                </button>
-                {['PROVIDER_SELECTED', 'EN_ROUTE', 'ARRIVED'].includes(currentStatus || '') && (
-                  <button
-                    onClick={handleCancelOrder}
-                    disabled={isCancelling}
-                    className="btn-secondary"
-                    style={{ color: '#fda4af', borderColor: 'rgba(244, 63, 94, 0.3)' }}
-                  >
-                    {isCancelling ? 'Отмена...' : '✕ Отменить заказ'}
-                  </button>
-                )}
-              </>
-            )}
+              </div>
+            </div>
+          )}
 
-            <button
-              onClick={() => {
-                setCreatedRequestId(null);
-                setSelectedOrderResult(null);
-                setOffers([]);
-                setReviewSubmitted(false);
-              }}
-              className="btn-secondary"
-            >
-              + Новая заявка
-            </button>
-          </div>
+          {/* CREATE NEW REQUEST BUTTON IF FINISHED */}
+          {(currentStatus === 'COMPLETED' || currentStatus === 'CANCELLED') && (
+            <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+              <button
+                onClick={() => {
+                  setSelectedOrderResult(null);
+                  setCreatedRequestId(null);
+                  setOffers([]);
+                  setReviewSubmitted(false);
+                }}
+                className="btn btn-primary"
+              >
+                ➕ Создать новую заявку
+              </button>
+            </div>
+          )}
         </div>
       ) : (
-        /* 2. REQUEST CREATION & RADAR DISPATCH WIZARD */
-        <>
+        /* 2. CREATION & LIVE RADAR VIEW */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* REQUEST FORM */}
           <div className="glass-card" style={{ padding: '1.75rem' }}>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <span className="badge badge-blue">Шаг 1 из 2</span>
-              <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>
-                Какая помощь требуется автомобилю?
-              </h2>
-            </div>
+            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              📍 Вызов мастера в Астане
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Укажите причину поломки и выберите ориентир на карте для поиска ближайших экипажей
+            </p>
 
-            {/* Category Selector */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-              {[
-                {
-                  id: 'battery_jumpstart',
-                  title: '🔋 Прикурить / АКБ',
-                  desc: 'Срочная прикурка 12V/24V бустером, доставка и замена аккумулятора',
-                },
-                {
-                  id: 'electrical_starting',
-                  title: '⚡ Автоэлектрик / Запуск',
-                  desc: 'Компьютерная диагностика, стартер, генератор, сигнализация',
-                },
-                {
-                  id: 'mobile_mechanic',
-                  title: '🔧 Мобильный механик',
-                  desc: 'Мелкий ремонт на месте поломки, патрубки, свечи, замена колеса',
-                },
-              ].map((cat) => (
-                <div
-                  key={cat.id}
-                  onClick={() => setCategory(cat.id as ServiceCategory)}
-                  className={`category-card ${category === cat.id ? 'selected' : ''}`}
-                >
-                  <div style={{ fontWeight: 700, fontSize: '1rem', color: category === cat.id ? '#93c5fd' : '#f8fafc' }}>
-                    {cat.title}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                    {cat.desc}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Location & Map Picker */}
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                <label style={{ fontWeight: 700, fontSize: '0.95rem' }}>
-                  📍 Место поломки в Астане
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Category Selector */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                  Категория проблемы
                 </label>
-                <button
-                  onClick={handleGetLocation}
-                  disabled={isLocating}
-                  className="btn-secondary"
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-                >
-                  {isLocating ? 'Определяю...' : '🎯 Моя геопозиция'}
-                </button>
-              </div>
-
-              {/* Landmark quick preset chips */}
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                {ASTANA_LANDMARKS.map((lm) => (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
                   <button
-                    key={lm.name}
                     type="button"
-                    onClick={() => {
-                      setCoords({ lat: lm.lat, lng: lm.lng });
-                      setLocationName(lm.name);
+                    onClick={() => setCategory('electrical_starting')}
+                    style={{
+                      padding: '1rem',
+                      textAlign: 'left',
+                      borderRadius: 'var(--radius-md)',
+                      border: category === 'electrical_starting' ? '2px solid var(--primary)' : '1px solid var(--border-subtle)',
+                      background: category === 'electrical_starting' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(15, 23, 42, 0.6)',
+                      cursor: 'pointer',
                     }}
-                    className={`chip ${coords.lat === lm.lat && coords.lng === lm.lng ? 'active' : ''}`}
                   >
-                    {lm.name.split(' (')[0]}
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>⚡</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#f8fafc' }}>Автоэлектрика</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Стартер, генератор, проводка</div>
                   </button>
-                ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setCategory('battery_jumpstart')}
+                    style={{
+                      padding: '1rem',
+                      textAlign: 'left',
+                      borderRadius: 'var(--radius-md)',
+                      border: category === 'battery_jumpstart' ? '2px solid var(--emerald)' : '1px solid var(--border-subtle)',
+                      background: category === 'battery_jumpstart' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(15, 23, 42, 0.6)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>🔋</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#f8fafc' }}>Прикурка АКБ</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Бустер 12V/24V, запуск в мороз</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCategory('mobile_mechanic')}
+                    style={{
+                      padding: '1rem',
+                      textAlign: 'left',
+                      borderRadius: 'var(--radius-md)',
+                      border: category === 'mobile_mechanic' ? '2px solid var(--amber)' : '1px solid var(--border-subtle)',
+                      background: category === 'mobile_mechanic' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(15, 23, 42, 0.6)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>🔧</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#f8fafc' }}>Выездной механик</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Замена колеса, патрубки, ремни</div>
+                  </button>
+                </div>
               </div>
 
-              {/* Interactive Astana Leaflet Map */}
-              <AstanaMap
-                center={coords}
-                radiusKm={5}
-                onLocationChange={(newCoords, name) => {
-                  setCoords(newCoords);
-                  setLocationName(name);
-                }}
-                providerPins={onlineProviders}
-              />
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
-                Кликните по карте, чтобы переместить метку места поломки
+              {/* Vehicle Selector (Phase 4) */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                  🚗 Автомобиль
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                  <select
+                    className="form-select"
+                    value={selectedVehicle}
+                    onChange={(e) => setSelectedVehicle(e.target.value)}
+                  >
+                    {POPULAR_ASTANA_CARS.map((car) => (
+                      <option key={car} value={car}>
+                        {car}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedVehicle === 'Другой автомобиль' && (
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Укажите марку и модель авто..."
+                      value={customVehicle}
+                      onChange={(e) => setCustomVehicle(e.target.value)}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Problem Description */}
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.4rem' }}>
-                Детали поломки (марка авто, симптомы)
-              </label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="Например: Toyota Camry 2020, сел аккумулятор во дворе"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
+              {/* Map & Landmark Selector */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                    Местоположение поломки: <span style={{ color: 'var(--primary)' }}>{locationName}</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGetLocation}
+                    disabled={isLocating}
+                    className="btn btn-secondary"
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                  >
+                    {isLocating ? 'Определение...' : '📍 Моё местоположение'}
+                  </button>
+                </div>
 
-            {/* Create Request Action */}
-            <button
-              onClick={handleCreateRequest}
-              disabled={isPublishing}
-              className="btn-primary"
-              style={{ width: '100%', padding: '1rem', fontSize: '1.05rem' }}
-            >
-              {isPublishing ? '🚀 Поиск мастеров в радиусе 5 км...' : '🚀 Найти мастера поблизости (Радиус: 5 км)'}
-            </button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  {ASTANA_LANDMARKS.map((landmark) => (
+                    <button
+                      key={landmark.name}
+                      type="button"
+                      onClick={() => {
+                        setCoords({ lat: landmark.lat, lng: landmark.lng });
+                        setLocationName(landmark.name);
+                      }}
+                      className={`chip ${locationName === landmark.name ? 'active' : ''}`}
+                    >
+                      {landmark.name}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Interactive Leaflet Map */}
+                <AstanaMap
+                  center={coords}
+                  radiusKm={5}
+                  onLocationChange={(newCoords, name) => {
+                    setCoords(newCoords);
+                    setLocationName(name || `Точка: ${newCoords.lat.toFixed(4)}, ${newCoords.lng.toFixed(4)}`);
+                  }}
+                  providerPins={onlineProviders}
+                />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Что именно произошло? (Необязательно)
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Например: Не крутит стартер при повороте ключа, горит чек..."
+                />
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="button"
+                onClick={handleCreateRequest}
+                disabled={isPublishing}
+                className="btn btn-primary"
+                style={{ padding: '0.9rem 1.5rem', fontSize: '1rem', fontWeight: 800 }}
+              >
+                {isPublishing ? 'Публикация заявки в Астане...' : '🚀 Опубликовать заявку'}
+              </button>
+            </div>
           </div>
 
-          {/* 3. RADAR SEARCHING & INCOMING OFFERS SECTION */}
+          {/* LIVE RADAR & OFFERS LIST (Phase 2) */}
           {createdRequestId && (
-            <div className="glass-card" style={{ padding: '1.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                <div>
-                  <span className="badge badge-emerald">Поиск активен</span>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '0.3rem' }}>
-                    Предложения от мастеров ({offers.length})
-                  </h3>
+            <div className="glass-card" style={{ padding: '1.75rem', border: '1px solid var(--border-accent)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  {/* Radar Scanner Animation (Phase 2) */}
+                  <div className="radar-scanner">
+                    <div className="radar-sweep-line" />
+                    <div style={{ fontSize: '1.5rem', zIndex: 2 }}>📡</div>
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className="badge badge-blue">Поиск мастеров онлайн</span>
+                      <span className="badge badge-emerald">Радиус: 5-15 км</span>
+                    </div>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '0.25rem' }}>
+                      Радар поиска исполнителей
+                    </h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Оповещены ближайшие экипажи в Астане. Предложения появляются в реальном времени.
+                    </p>
+                  </div>
                 </div>
-                <button
-                  onClick={fetchOffers}
-                  className="btn-secondary"
-                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
-                >
-                  🔄 Обновить
-                </button>
+
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Поступило откликов</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 900, color: offers.length > 0 ? 'var(--emerald)' : 'var(--amber)' }}>
+                    {offers.length} {offers.length === 1 ? 'предложение' : offers.length >= 2 && offers.length <= 4 ? 'предложения' : 'предложений'}
+                  </div>
+                </div>
               </div>
 
-              {offers.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-                  <div className="radar-container" style={{ marginBottom: '1rem' }}>
-                    <div className="radar-circle"></div>
-                    <div className="radar-circle"></div>
-                    <div className="radar-circle"></div>
-                    <div className="radar-dot"></div>
+              {/* OFFERS CARDS (Phase 2 & 3) */}
+              <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {offers.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>⏳</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Ожидаем отклики мастеров...</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      Переключитесь на вкладку «🔧 Мастер / СТО» вверху экрана, чтобы отправить тестовый оффер
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
-                    Оповещаем мастеров в радиусе 5 км...
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-                    Найдено мастеров на линии: <strong>{matchedCount ?? '...'}</strong>
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                    💡 Совет: Переключитесь на вкладку «🔧 Кабинет Мастера» вверху, чтобы отправить оффер от лица исполнителя!
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {offers.map((offer) => (
+                ) : (
+                  offers.map((offer) => (
                     <div
                       key={offer.id}
+                      className="glass-card"
                       style={{
-                        background: 'rgba(15, 23, 42, 0.8)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
                         padding: '1.25rem',
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
                         flexWrap: 'wrap',
                         gap: '1rem',
+                        border: '1px solid var(--border-accent)',
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-primary)' }}>
-                          {offer.businessName}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div
+                          style={{
+                            width: '46px',
+                            height: '46px',
+                            borderRadius: '12px',
+                            background: 'rgba(59, 130, 246, 0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '1.4rem',
+                          }}
+                        >
+                          🔧
                         </div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                          ⭐ {offer.rating.toFixed(1)} ({offer.completedJobs} заказов) | ⏱ Прибудет через{' '}
-                          <strong style={{ color: '#60a5fa' }}>{offer.etaMinutes} мин</strong>
-                        </div>
-                        {offer.message && (
-                          <div style={{ fontSize: '0.85rem', color: '#cbd5e1', marginTop: '0.4rem', fontStyle: 'italic' }}>
-                            «{offer.message}»
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <h4 style={{ fontWeight: 800, fontSize: '1rem' }}>{offer.businessName}</h4>
+                            <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
+                              {offer.providerType}
+                            </span>
                           </div>
-                        )}
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                            ⭐ {((offer.rating || 480) / 100).toFixed(1)} • {offer.completedJobs || 120} выездов • ⏱️ {offer.etaMinutes} мин
+                          </div>
+                          {offer.message && (
+                            <div style={{ fontSize: '0.75rem', color: '#93c5fd', marginTop: '0.25rem', fontStyle: 'italic' }}>
+                              &ldquo;{offer.message}&rdquo;
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#34d399' }}>
-                            {offer.pricingMode === 'fixed' &&
-                              `${((offer.amountTiyn || 0) / 100).toLocaleString()} ₸ (Фикс)`}
-                            {offer.pricingMode === 'diagnostic_fee' &&
-                              `${((offer.amountTiyn || 0) / 100).toLocaleString()} ₸ (Выезд + Диагностика)`}
-                            {offer.pricingMode === 'estimate_range' &&
-                              `${((offer.minAmountTiyn || 0) / 100).toLocaleString()}–${((offer.maxAmountTiyn || 0) / 100).toLocaleString()} ₸`}
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                            {offer.pricingMode === 'fixed' ? 'Фиксированная цена' : 'Диагностика'}
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Оплата на месте</div>
+                          <div style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--emerald)' }}>
+                            {offer.amountTiyn ? `${(offer.amountTiyn / 100).toLocaleString('ru-RU')} ₸` : 'По прайсу'}
+                          </div>
                         </div>
 
                         <button
                           onClick={() => handleSelectOffer(offer.id)}
                           disabled={selectingOfferId === offer.id}
-                          className="btn-emerald"
-                          style={{ padding: '0.75rem 1.4rem' }}
+                          className="btn btn-emerald"
+                          style={{ padding: '0.65rem 1.25rem', fontWeight: 800 }}
                         >
-                          {selectingOfferId === offer.id ? 'Выбираем...' : 'Выбрать мастера'}
+                          {selectingOfferId === offer.id ? 'Выбор...' : 'Выбрать мастера'}
                         </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
           )}
-        </>
+        </div>
+      )}
+
+      {/* 3. PHONE AUTH MODAL (Phase 1) */}
+      {showPhoneModal && (
+        <div className="modal-overlay" onClick={() => setShowPhoneModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '420px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              📱 Вход по номеру телефона
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              В режиме MVP вход происходит мгновенно без пароля с сохранением сессии в браузере.
+            </p>
+
+            <form onSubmit={handlePhoneSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                  Номер телефона в Казахстане:
+                </label>
+                <input
+                  type="tel"
+                  className="form-input"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="+7 (701) 000-00-00"
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button
+                  type="submit"
+                  disabled={isLoggingIn}
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                >
+                  {isLoggingIn ? 'Вход...' : 'Войти в аккаунт'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPhoneModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. ORDER HISTORY MODAL / DRAWER (Phase 4) */}
+      {showHistoryModal && (
+        <div className="modal-overlay" onClick={() => setShowHistoryModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '640px', width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>
+                📋 История моих заказов в CarFix
+              </h3>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.5rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {isLoadingHistory ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                Загрузка истории заказов...
+              </div>
+            ) : historyOrders.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                У вас пока нет завершенных заказов.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {historyOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    style={{
+                      padding: '1rem',
+                      background: 'rgba(15, 23, 42, 0.8)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-subtle)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '0.75rem',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span
+                          className={`badge ${
+                            order.status === 'COMPLETED' ? 'badge-emerald' : 'badge-amber'
+                          }`}
+                          style={{ fontSize: '0.65rem' }}
+                        >
+                          {order.status}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {new Date(order.createdAt).toLocaleDateString('ru-RU')}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: '0.95rem', marginTop: '0.25rem' }}>
+                        {order.provider.businessName}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        {order.category} {order.review ? `• Оценка: ⭐ ${order.review.rating}` : ''}
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--emerald)' }}>
+                        {order.finalAmountTiyn
+                          ? `${(order.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                          : order.agreedAmountTiyn
+                          ? `${(order.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                          : '-'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
