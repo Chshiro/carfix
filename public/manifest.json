@@ -1,0 +1,41 @@
+{
+  "name": "CarFix - Автопомощь Астана",
+  "short_name": "CarFix",
+  "description": "Маркетплейс оперативной автопомощи и эвакуации в г. Астана",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "categories": ["auto", "navigation", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Вызвать помощь",
+      "short_name": "SOS Заявка",
+      "description": "Срочный вызов мастера или эвакуатора",
+      "url": "/?role=customer",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Смена мастера",
+      "short_name": "Мастер",
+      "description": "Выйти на линию для приема заказов",
+      "url": "/?role=provider",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
+    }
+  ]
+}
