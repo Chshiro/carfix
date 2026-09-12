@@ -6,6 +6,10 @@ import { AppError } from '../../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
+const paramsSchema = z.object({
+  id: z.string().uuid(),
+});
+
 const selectOfferSchema = z.object({
   offerId: z.string().uuid(),
 });
@@ -15,13 +19,14 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const validatedParams = paramsSchema.parse(params);
     const currentUser = await requireAuth(req, ['motorist', 'admin']);
     const body = await req.json();
     const validated = selectOfferSchema.parse(body);
 
     const result = await OrderService.selectOffer(
       {
-        requestId: params.id,
+        requestId: validatedParams.id,
         offerId: validated.offerId,
       },
       currentUser

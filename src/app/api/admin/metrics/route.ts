@@ -1,0 +1,40 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { AdminService } from '../../../../server/services/admin.service';
+import { requireAuth } from '../../../../server/auth';
+import { AppError } from '../../../../server/errors';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(req: NextRequest) {
+  try {
+    await requireAuth(req, ['admin']);
+
+    const metrics = await AdminService.getMarketplaceMetrics();
+
+    return NextResponse.json({
+      status: 'ok',
+      data: metrics,
+    });
+  } catch (error: unknown) {
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        {
+          status: 'error',
+          code: error.code,
+          message: error.message,
+        },
+        { status: error.statusCode }
+      );
+    }
+
+    console.error('Unhandled error in GET /api/admin/metrics:', error);
+    return NextResponse.json(
+      {
+        status: 'error',
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected internal server error occurred',
+      },
+      { status: 500 }
+    );
+  }
+}

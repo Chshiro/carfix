@@ -39,6 +39,8 @@ export const SEED_PROVIDER_OFFLINE_ID = 'b7000000-0000-0000-0000-000000000007';
 export const SEED_PROVIDER_BLOCKED_USER_ID = 'a8000000-0000-0000-0000-000000000008';
 export const SEED_PROVIDER_BLOCKED_ID = 'b8000000-0000-0000-0000-000000000008';
 
+export const SEED_ADMIN_USER_ID = 'e0000000-0000-0000-0000-000000000001';
+
 export const ALLOWED_DEMO_USER_IDS = new Set<string>([
   SEED_CUSTOMER_USER_ID,
   SEED_PROVIDER_1_USER_ID,
@@ -49,6 +51,7 @@ export const ALLOWED_DEMO_USER_IDS = new Set<string>([
   SEED_PROVIDER_FAR_USER_ID,
   SEED_PROVIDER_OFFLINE_USER_ID,
   SEED_PROVIDER_BLOCKED_USER_ID,
+  SEED_ADMIN_USER_ID,
 ]);
 
 export const ALLOWED_DEMO_PROVIDER_IDS = new Set<string>([
@@ -85,6 +88,16 @@ export async function seedDatabase() {
     id: SEED_CUSTOMER_ID,
     phone: '+77011112233',
     roles: ['motorist'],
+    isBlocked: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 2. Create Admin (Operations Team)
+  await db.insert(users).values({
+    id: SEED_ADMIN_USER_ID,
+    phone: '+77000000000',
+    roles: ['admin'],
     isBlocked: false,
     createdAt: now,
     updatedAt: now,

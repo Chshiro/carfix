@@ -13,6 +13,29 @@ import {
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
+// Helper to parse PostGIS geography(Point, 4326) driver value
+export function parseGeographyPoint(value: string | { lng: number; lat: number }): { lng: number; lat: number } {
+  if (typeof value === 'object' && value !== null && 'lng' in value && 'lat' in value) {
+    return { lng: Number(value.lng), lat: Number(value.lat) };
+  }
+  const str = String(value);
+  const matches = str.match(/POINT\(([-\d.]+)\s+([-\d.]+)\)/i);
+  if (matches) {
+    return { lng: parseFloat(matches[1]), lat: parseFloat(matches[2]) };
+  }
+  if (/^[0-9a-fA-F]{42,}$/.test(str)) {
+    const buf = Buffer.from(str, 'hex');
+    const isLE = buf[0] === 1;
+    const type = isLE ? buf.readUInt32LE(1) : buf.readUInt32BE(1);
+    const hasSrid = (type & 0x20000000) !== 0;
+    const offset = hasSrid ? 9 : 5;
+    const lng = isLE ? buf.readDoubleLE(offset) : buf.readDoubleBE(offset);
+    const lat = isLE ? buf.readDoubleLE(offset + 8) : buf.readDoubleBE(offset + 8);
+    return { lng, lat };
+  }
+  throw new Error(`Invalid WKB/geography point format: ${str}`);
+}
+
 // Custom PostGIS geography(Point, 4326) type for Drizzle
 export const geographyPoint = customType<{
   data: { lng: number; lat: number };
@@ -25,25 +48,7 @@ export const geographyPoint = customType<{
     return `SRID=4326;POINT(${value.lng} ${value.lat})`;
   },
   fromDriver(value: string | { lng: number; lat: number }): { lng: number; lat: number } {
-    if (typeof value === 'object' && value !== null && 'lng' in value && 'lat' in value) {
-      return { lng: Number(value.lng), lat: Number(value.lat) };
-    }
-    const str = String(value);
-    const matches = str.match(/POINT\(([-\d.]+)\s+([-\d.]+)\)/i);
-    if (matches) {
-      return { lng: parseFloat(matches[1]), lat: parseFloat(matches[2]) };
-    }
-    if (/^[0-9a-fA-F]{42,}$/.test(str)) {
-      const buf = Buffer.from(str, 'hex');
-      const isLE = buf[0] === 1;
-      const type = isLE ? buf.readUInt32LE(1) : buf.readUInt32BE(1);
-      const hasSrid = (type & 0x20000000) !== 0;
-      const offset = hasSrid ? 9 : 5;
-      const lng = isLE ? buf.readDoubleLE(offset) : buf.readDoubleBE(offset);
-      const lat = isLE ? buf.readDoubleLE(offset + 8) : buf.readDoubleBE(offset + 8);
-      return { lng, lat };
-    }
-    return { lng: 0, lat: 0 };
+    return parseGeographyPoint(value);
   },
 });
 
@@ -67,7 +72,8 @@ export const providers = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     userId: uuid('user_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'cascade' })
+      .unique(),
     businessName: varchar('business_name', { length: 150 }).notNull(),
     providerType: varchar('provider_type', { length: 50 }).notNull(), // STO | INDEPENDENT_MASTER | MOBILE_MASTER
     verificationLevel: varchar('verification_level', { length: 50 })
@@ -86,15 +92,21 @@ export const providers = pgTable(
 );
 
 // Provider capabilities table
-export const providerCapabilities = pgTable('provider_capabilities', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  providerId: uuid('provider_id')
-    .notNull()
-    .references(() => providers.id, { onDelete: 'cascade' }),
-  capability: varchar('capability', { length: 50 }).notNull(), // BATTERY | AUTO_ELECTRIC | DIAGNOSTICS | MECHANICAL_MINOR
-  isActive: boolean('is_active').default(true).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const providerCapabilities = pgTable(
+  'provider_capabilities',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    capability: varchar('capability', { length: 50 }).notNull(), // BATTERY | AUTO_ELECTRIC | DIAGNOSTICS | MECHANICAL_MINOR
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_provider_capabilities_provider_capability').on(table.providerId, table.capability),
+  ]
+);
 
 // Provider availability & spatial location table
 export const providerAvailability = pgTable(
@@ -120,14 +132,20 @@ export const providerAvailability = pgTable(
 );
 
 // Provider service modes
-export const providerServiceModes = pgTable('provider_service_modes', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  providerId: uuid('provider_id')
-    .notNull()
-    .references(() => providers.id, { onDelete: 'cascade' }),
-  serviceMode: varchar('service_mode', { length: 50 }).notNull(), // MOBILE | AT_LOCATION
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const providerServiceModes = pgTable(
+  'provider_service_modes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    serviceMode: varchar('service_mode', { length: 50 }).notNull(), // MOBILE | AT_LOCATION
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_provider_service_modes_provider_mode').on(table.providerId, table.serviceMode),
+  ]
+);
 
 // Vehicles table (optional)
 export const vehicles = pgTable(
@@ -292,6 +310,7 @@ export const reviews = pgTable(
   (table) => [
     uniqueIndex('uq_reviews_order_from_user').on(table.orderId, table.fromUserId),
     index('idx_reviews_to_user').on(table.toUserId),
+    check('chk_reviews_rating', sql`${table.rating} >= 1 AND ${table.rating} <= 5`),
   ]
 );
 

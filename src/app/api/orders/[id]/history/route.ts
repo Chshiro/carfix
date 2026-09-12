@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { RequestService } from '../../../../server/services/request.service';
-import { requireAuth } from '../../../../server/auth';
-import { AppError } from '../../../../server/errors';
+import { OrderService } from '../../../../../server/services/order.service';
+import { requireAuth } from '../../../../../server/auth';
+import { AppError } from '../../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,10 +17,11 @@ export async function GET(
   try {
     const validatedParams = paramsSchema.parse(params);
     const currentUser = await requireAuth(req);
-    const request = await RequestService.getRequestById(validatedParams.id, currentUser);
+    const history = await OrderService.getOrderHistory(validatedParams.id, currentUser);
+
     return NextResponse.json({
       status: 'ok',
-      data: request,
+      data: history,
     });
   } catch (err: unknown) {
     if (err instanceof z.ZodError) {
@@ -28,7 +29,7 @@ export async function GET(
         {
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'Invalid request ID format',
+            message: 'Invalid order ID format',
             details: err.format(),
           },
         },
@@ -47,7 +48,7 @@ export async function GET(
         { status: err.statusCode }
       );
     }
-    console.error('Get request error:', err);
+    console.error('Get order history error:', err);
     return NextResponse.json(
       {
         error: {
@@ -59,4 +60,3 @@ export async function GET(
     );
   }
 }
-

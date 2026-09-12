@@ -22,8 +22,12 @@ import {
   users,
   providers,
   providerAvailability,
+  providerCapabilities,
+  providerServiceModes,
+  reviews,
   vehicles,
   serviceRequests,
+  parseGeographyPoint,
 } from '../src/db/schema/index';
 import { eq } from 'drizzle-orm';
 import { AuthUser } from '../src/server/auth';
@@ -708,5 +712,73 @@ describe('CarFix Vertical Slice: Request → Offer → Selection → Order', () 
         })
       ).rejects.toThrow();
     });
+
+    it('parseGeographyPoint / geographyPoint throws on corrupted or unrecognizable format (D-1)', () => {
+      expect(() => parseGeographyPoint('CORRUPTED_NOT_A_POINT')).toThrow(
+        /Invalid WKB\/geography point format/
+      );
+      expect(() => parseGeographyPoint('')).toThrow(
+        /Invalid WKB\/geography point format/
+      );
+    });
+
+    it('DB enforces UNIQUE(user_id) on providers table via providers_user_id_unique (D-4)', async () => {
+      // SEED_PROVIDER_1_ID already exists with user_id 'a1000000-0000-0000-0000-000000000001'
+      await expect(
+        db.insert(providers).values({
+          userId: 'a1000000-0000-0000-0000-000000000001',
+          businessName: 'Duplicate User Provider',
+          providerType: 'STO',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB enforces UNIQUE(provider_id, capability) on provider_capabilities (D-2)', async () => {
+      // Seed provider 1 already has BATTERY capability
+      await expect(
+        db.insert(providerCapabilities).values({
+          providerId: SEED_PROVIDER_1_ID,
+          capability: 'BATTERY',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB enforces UNIQUE(provider_id, service_mode) on provider_service_modes (D-3)', async () => {
+      // Seed provider 1 already has MOBILE service mode
+      await expect(
+        db.insert(providerServiceModes).values({
+          providerId: SEED_PROVIDER_1_ID,
+          serviceMode: 'MOBILE',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('DB enforces CHECK(rating >= 1 AND rating <= 5) on reviews table (D-5)', async () => {
+      const [order] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.requestId, createdRequestId));
+
+      // Rating 0 is invalid (< 1)
+      await expect(
+        db.insert(reviews).values({
+          orderId: order.id,
+          fromUserId: order.customerId,
+          toUserId: order.providerId,
+          rating: 0,
+        })
+      ).rejects.toThrow();
+
+      // Rating 6 is invalid (> 5)
+      await expect(
+        db.insert(reviews).values({
+          orderId: order.id,
+          fromUserId: order.customerId,
+          toUserId: order.providerId,
+          rating: 6,
+        })
+      ).rejects.toThrow();
+    });
   });
 });
+

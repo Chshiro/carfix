@@ -257,4 +257,245 @@ export class OrderService {
       request,
     };
   }
+
+  /**
+   * Slice 2: Order Lifecycle FSM Transitions
+   * Allowed transitions:
+   * - PROVIDER_SELECTED -> EN_ROUTE (Provider / Admin)
+   * - EN_ROUTE -> ARRIVED (Provider / Admin)
+   * - ARRIVED -> IN_PROGRESS (Provider / Admin)
+   * - IN_PROGRESS -> COMPLETED (Provider / Admin, requires finalAmountTiyn > 0)
+   * - PROVIDER_SELECTED | EN_ROUTE | ARRIVED -> CANCELLED (Customer / Provider / Admin, requires cancellationReason)
+   */
+  static async updateOrderStatus(
+    orderId: string,
+    input: {
+      status: 'EN_ROUTE' | 'ARRIVED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+      finalAmountTiyn?: number;
+      cancellationReason?: string;
+      note?: string;
+    },
+    currentUser: AuthUser
+  ) {
+    if (currentUser.isBlocked) {
+      throw new ForbiddenError('User account is blocked');
+    }
+
+    return await db.transaction(async (tx) => {
+      // 1. Lock order row
+      const [order] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .for('update');
+
+      if (!order) {
+        throw new NotFoundError('Order not found');
+      }
+
+      // 2. Fetch provider profile
+      const [provider] = await tx
+        .select()
+        .from(providers)
+        .where(eq(providers.id, order.providerId));
+
+      if (!provider) {
+        throw new NotFoundError('Order provider not found');
+      }
+
+      // 3. Determine actor role relative to this order
+      const isCustomer = order.customerId === currentUser.id;
+      const isProvider = provider.userId === currentUser.id;
+      const isAdmin = currentUser.roles.includes('admin');
+
+      if (!isCustomer && !isProvider && !isAdmin) {
+        throw new ForbiddenError('You do not have permission to modify this order');
+      }
+
+      const actorRole = isAdmin ? 'admin' : isProvider ? 'provider' : 'motorist';
+      const currentStatus = order.status;
+      const targetStatus = input.status;
+
+      // 4. Validate FSM Transition and Actor Authorization
+      if (targetStatus === 'CANCELLED') {
+        // Cancellation is allowed from PROVIDER_SELECTED, EN_ROUTE, ARRIVED
+        const cancelableStatuses = ['PROVIDER_SELECTED', 'EN_ROUTE', 'ARRIVED'];
+        if (!cancelableStatuses.includes(currentStatus)) {
+          throw new ConflictError(
+            `Cannot cancel order in '${currentStatus}' status. Cancellation is only allowed before work starts.`
+          );
+        }
+
+        if (!input.cancellationReason || input.cancellationReason.trim().length === 0) {
+          throw new ConflictError('Cancellation reason is required to cancel an order');
+        }
+
+        const now = new Date();
+
+        const [updatedOrder] = await tx
+          .update(orders)
+          .set({
+            status: 'CANCELLED',
+            cancelledBy: currentUser.id,
+            cancellationReason: input.cancellationReason.trim(),
+            updatedAt: now,
+          })
+          .where(eq(orders.id, order.id))
+          .returning();
+
+        await tx
+          .update(serviceRequests)
+          .set({ status: 'CANCELLED', updatedAt: now })
+          .where(eq(serviceRequests.id, order.requestId));
+
+        await tx.insert(orderStatusHistory).values({
+          orderId: order.id,
+          fromStatus: currentStatus,
+          toStatus: 'CANCELLED',
+          actorId: currentUser.id,
+          actorRole,
+          note: input.note || input.cancellationReason.trim(),
+          createdAt: now,
+        });
+
+        return { order: updatedOrder, historyAction: 'CANCELLED' };
+      }
+
+      // Operational transitions: EN_ROUTE, ARRIVED, IN_PROGRESS, COMPLETED
+      // Must be performed by the assigned provider or admin
+      if (!isProvider && !isAdmin) {
+        throw new ForbiddenError(
+          `Only the assigned service provider can advance order status to '${targetStatus}'`
+        );
+      }
+
+      // Validate sequential FSM progression
+      const validTransitions: Record<string, string> = {
+        PROVIDER_SELECTED: 'EN_ROUTE',
+        EN_ROUTE: 'ARRIVED',
+        ARRIVED: 'IN_PROGRESS',
+        IN_PROGRESS: 'COMPLETED',
+      };
+
+      if (validTransitions[currentStatus] !== targetStatus) {
+        throw new ConflictError(
+          `Invalid status transition from '${currentStatus}' to '${targetStatus}'`
+        );
+      }
+
+      const now = new Date();
+
+      if (targetStatus === 'COMPLETED') {
+        const finalAmount = input.finalAmountTiyn ?? order.agreedAmountTiyn;
+        if (!finalAmount || finalAmount <= 0) {
+          throw new ConflictError(
+            'Final settlement amount (in tiyn) is required and must be greater than 0 upon completion'
+          );
+        }
+
+        const [updatedOrder] = await tx
+          .update(orders)
+          .set({
+            status: 'COMPLETED',
+            finalAmountTiyn: finalAmount,
+            updatedAt: now,
+          })
+          .where(eq(orders.id, order.id))
+          .returning();
+
+        await tx
+          .update(serviceRequests)
+          .set({ status: 'COMPLETED', updatedAt: now })
+          .where(eq(serviceRequests.id, order.requestId));
+
+        // Increment provider completed jobs
+        await tx
+          .update(providers)
+          .set({
+            completedJobs: provider.completedJobs + 1,
+            updatedAt: now,
+          })
+          .where(eq(providers.id, provider.id));
+
+        await tx.insert(orderStatusHistory).values({
+          orderId: order.id,
+          fromStatus: currentStatus,
+          toStatus: 'COMPLETED',
+          actorId: currentUser.id,
+          actorRole,
+          note: input.note || 'Work completed and settled',
+          createdAt: now,
+        });
+
+        return { order: updatedOrder, historyAction: 'COMPLETED' };
+      }
+
+      // EN_ROUTE, ARRIVED, IN_PROGRESS
+      const [updatedOrder] = await tx
+        .update(orders)
+        .set({
+          status: targetStatus,
+          updatedAt: now,
+        })
+        .where(eq(orders.id, order.id))
+        .returning();
+
+      await tx
+        .update(serviceRequests)
+        .set({ status: targetStatus, updatedAt: now })
+        .where(eq(serviceRequests.id, order.requestId));
+
+      await tx.insert(orderStatusHistory).values({
+        orderId: order.id,
+        fromStatus: currentStatus,
+        toStatus: targetStatus,
+        actorId: currentUser.id,
+        actorRole,
+        note: input.note || `Status changed to ${targetStatus}`,
+        createdAt: now,
+      });
+
+      return { order: updatedOrder, historyAction: targetStatus };
+    });
+  }
+
+  /**
+   * Get full audit status history timeline for an order
+   */
+  static async getOrderHistory(orderId: string, currentUser: AuthUser) {
+    if (currentUser.isBlocked) {
+      throw new ForbiddenError('User account is blocked');
+    }
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId));
+
+    if (!order) {
+      throw new NotFoundError('Order not found');
+    }
+
+    const [provider] = await db
+      .select()
+      .from(providers)
+      .where(eq(providers.id, order.providerId));
+
+    const isCustomer = order.customerId === currentUser.id;
+    const isProvider = provider?.userId === currentUser.id;
+    const isAdmin = currentUser.roles.includes('admin');
+
+    if (!isCustomer && !isProvider && !isAdmin) {
+      throw new ForbiddenError('You do not have permission to view this order history');
+    }
+
+    const history = await db
+      .select()
+      .from(orderStatusHistory)
+      .where(eq(orderStatusHistory.orderId, orderId))
+      .orderBy(orderStatusHistory.createdAt);
+
+    return history;
+  }
 }
+

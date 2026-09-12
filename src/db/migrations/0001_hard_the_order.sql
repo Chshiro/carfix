@@ -1,0 +1,6 @@
+ALTER TABLE "provider_offers" DROP CONSTRAINT "chk_provider_offers_pricing";--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_provider_capabilities_provider_capability" ON "provider_capabilities" USING btree ("provider_id","capability");--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_provider_service_modes_provider_mode" ON "provider_service_modes" USING btree ("provider_id","service_mode");--> statement-breakpoint
+ALTER TABLE "providers" ADD CONSTRAINT "providers_user_id_unique" UNIQUE("user_id");--> statement-breakpoint
+ALTER TABLE "provider_offers" ADD CONSTRAINT "chk_provider_offers_pricing" CHECK (("provider_offers"."pricing_mode" IN ('fixed', 'diagnostic_fee') AND "provider_offers"."amount_tiyn" IS NOT NULL AND "provider_offers"."amount_tiyn" > 0 AND "provider_offers"."min_amount_tiyn" IS NULL AND "provider_offers"."max_amount_tiyn" IS NULL) OR ("provider_offers"."pricing_mode" = 'estimate_range' AND "provider_offers"."min_amount_tiyn" IS NOT NULL AND "provider_offers"."min_amount_tiyn" > 0 AND "provider_offers"."max_amount_tiyn" IS NOT NULL AND "provider_offers"."max_amount_tiyn" >= "provider_offers"."min_amount_tiyn" AND "provider_offers"."amount_tiyn" IS NULL));--> statement-breakpoint
+ALTER TABLE "reviews" ADD CONSTRAINT "chk_reviews_rating" CHECK ("reviews"."rating" >= 1 AND "reviews"."rating" <= 5);

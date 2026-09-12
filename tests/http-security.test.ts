@@ -583,4 +583,64 @@ describe('HTTP Security & Authorization Boundary Integration Tests', () => {
       expect(body.data.location.lng).toBeCloseTo(71.4305, 3);
     });
   });
+
+  // -------------------------------------------------------------
+  // ROUTE PARAMETER VALIDATION (UUID)
+  // -------------------------------------------------------------
+  describe('Dynamic Route Parameter Validation', () => {
+    const invalidId = 'not-a-valid-uuid-12345';
+
+    it('GET /api/requests/[id] rejects non-UUID id with 400 VALIDATION_ERROR', async () => {
+      const req = new NextRequest(`http://localhost:3000/api/requests/${invalidId}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${customerAToken}` },
+      });
+
+      const res = await getRequestRoute(req, { params: { id: invalidId } });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error?.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('GET /api/requests/[id]/offers rejects non-UUID id with 400 VALIDATION_ERROR', async () => {
+      const req = new NextRequest(`http://localhost:3000/api/requests/${invalidId}/offers`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${customerAToken}` },
+      });
+
+      const res = await getOffersRoute(req, { params: { id: invalidId } });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error?.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('POST /api/requests/[id]/select rejects non-UUID id with 400 VALIDATION_ERROR', async () => {
+      const req = new NextRequest(`http://localhost:3000/api/requests/${invalidId}/select`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${customerAToken}`,
+        },
+        body: JSON.stringify({ offerId: '00000000-0000-0000-0000-000000000000' }),
+      });
+
+      const res = await selectOfferRoute(req, { params: { id: invalidId } });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error?.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('GET /api/orders/[id] rejects non-UUID id with 400 VALIDATION_ERROR', async () => {
+      const req = new NextRequest(`http://localhost:3000/api/orders/${invalidId}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${customerAToken}` },
+      });
+
+      const res = await getOrderRoute(req, { params: { id: invalidId } });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error?.code).toBe('VALIDATION_ERROR');
+    });
+  });
 });
+
