@@ -66,7 +66,7 @@ export default function ProviderWorkspace({
   selectedOrderResult,
   setSelectedOrderResult,
 }: ProviderWorkspaceProps) {
-  // 1. Master Session Hook (Phase 1)
+  // 1. Master Session Hook
   const {
     providerId,
     profile,
@@ -86,17 +86,17 @@ export default function ProviderWorkspace({
     fetchNearbyRequests,
   } = useMasterSession();
 
-  // 2. Toasts System (Phase 5)
+  // 2. Toasts System
   const [toasts, setToasts] = useState<Array<{ id: string; text: string; icon?: string }>>([]);
   const addToast = useCallback((text: string, icon: string = '⚡') => {
     const id = Math.random().toString(36).substring(7);
     setToasts((prev) => [...prev, { id, text, icon }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 4500);
   }, []);
 
-  // 3. Offer Bidding Modal State (Phase 2)
+  // 3. Offer Bidding Modal State
   const [biddingRequest, setBiddingRequest] = useState<NearbyRequestItem | null>(null);
   const [pricingMode, setPricingMode] = useState<PricingMode>('fixed');
   const [priceKzt, setPriceKzt] = useState<number>(5000);
@@ -106,22 +106,22 @@ export default function ProviderWorkspace({
   const [offerMessage, setOfferMessage] = useState<string>('Выезжаю сразу со всем необходимым инструментом.');
   const [isSendingOffer, setIsSendingOffer] = useState<boolean>(false);
 
-  // 4. Order Execution Actions State (Phase 3)
+  // 4. Order Execution Actions State
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
   const [finalPriceKzt, setFinalPriceKzt] = useState<number>(5000);
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const [cancelReason, setCancelReason] = useState<string>('Клиент перестал отвечать на звонки');
 
-  // 5. Mutual Review State (Phase 4)
+  // 5. Mutual Review State
   const [reviewRating, setReviewRating] = useState<number>(5);
   const [reviewTag, setReviewTag] = useState<string>('Вежливый и пунктуальный');
   const [isSubmittingReview, setIsSubmittingReview] = useState<boolean>(false);
   const [reviewSubmitted, setReviewSubmitted] = useState<boolean>(false);
 
-  // 6. Stats & History Modal (Phase 4)
+  // 6. Stats & History Modal
   const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
 
-  // 7. Withdrawal Modal State (Stage 3 Fintech)
+  // 7. Withdrawal Modal State
   const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
   const [withdrawAmountKzt, setWithdrawAmountKzt] = useState<number>(5000);
   const [withdrawDestinationType, setWithdrawDestinationType] = useState<'KASPI_GOLD' | 'HALYK_BANK'>('KASPI_GOLD');
@@ -165,7 +165,7 @@ export default function ProviderWorkspace({
     }
   };
 
-  // Track order assignment transition to trigger celebration toast
+  // Track order assignment transition
   const prevActiveOrderIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -175,7 +175,7 @@ export default function ProviderWorkspace({
     prevActiveOrderIdRef.current = activeOrder?.id || null;
   }, [activeOrder, addToast]);
 
-  // Master Location
+  // Master Location & Shift Status
   const masterCoords: MapCoords = availability?.location || { lat: 51.135, lng: 71.428 };
   const isOnline = availability?.isOnline ?? true;
 
@@ -234,7 +234,7 @@ export default function ProviderWorkspace({
     }
   };
 
-  // Status Machine Transitions Action (Phase 3)
+  // Status Machine Transitions Action
   const handleTransitionStatus = async (nextStatus: string) => {
     if (!activeOrder) return;
     setIsUpdatingStatus(true);
@@ -274,7 +274,7 @@ export default function ProviderWorkspace({
     }
   };
 
-  // Mutual Review Submission (Phase 4)
+  // Mutual Review Submission
   const handleSubmitMutualReview = async () => {
     if (!activeOrder) return;
     setIsSubmittingReview(true);
@@ -289,13 +289,13 @@ export default function ProviderWorkspace({
     }
   };
 
-  // Customer Phone Link
+  // Customer Contact & Location
   const clientPhone = activeOrder?.customer.phone || '+77011112233';
   const cleanClientPhone = clientPhone.replace(/\D/g, '');
   const clientLat = activeOrder?.request.location.lat || 51.1283;
   const clientLng = activeOrder?.request.location.lng || 71.4305;
 
-  // Map Provider & Request Pins
+  // Map Pins
   const mapPins: ProviderPin[] = [
     {
       id: providerId,
@@ -316,54 +316,43 @@ export default function ProviderWorkspace({
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
-      {/* TOASTS CONTAINER (Phase 5) */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', position: 'relative' }}>
+      {/* Toast Notifications */}
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className="toast-item">
-            <span>{toast.icon}</span>
+            <span style={{ fontSize: '1.25rem' }}>{toast.icon}</span>
             <span>{toast.text}</span>
           </div>
         ))}
       </div>
 
-      {/* 0. MASTER TOP BAR & SHIFT CONTROLS (Phase 1) */}
-      <div
-        className="glass-card"
-        style={{
-          padding: '1rem 1.25rem',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '1rem',
-          background: 'rgba(15, 23, 42, 0.85)',
-          border: '1px solid var(--border-accent)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+      {/* 0. TACTILE SHIFT CONTROL & TOP PROFILE BAR */}
+      <div className={`shift-toggle-card ${isOnline ? 'online' : ''}`}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
           <div
             style={{
-              width: '44px',
-              height: '44px',
-              borderRadius: '12px',
-              background: isOnline ? 'linear-gradient(135deg, #10b981 0%, #3b82f6 100%)' : 'rgba(100, 116, 139, 0.4)',
+              width: '56px',
+              height: '56px',
+              borderRadius: '16px',
+              background: isOnline ? 'linear-gradient(135deg, #06B6D4 0%, #2563EB 100%)' : '#192642',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '1.4rem',
-              boxShadow: isOnline ? '0 0 15px rgba(16, 185, 129, 0.4)' : 'none',
+              fontSize: '1.8rem',
+              boxShadow: isOnline ? '0 0 20px var(--aquamarine-glow)' : 'none',
+              transition: 'all 0.25s ease',
             }}
           >
             👨‍🔧
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
               <select
                 className="form-select"
                 value={providerId}
                 onChange={(e) => switchProvider(e.target.value)}
-                style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem', fontWeight: 700, width: 'auto' }}
+                style={{ padding: '0.4rem 0.75rem', fontSize: '1rem', fontWeight: 800, width: 'auto', background: '#0D1627' }}
               >
                 {DEMO_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -371,115 +360,116 @@ export default function ProviderWorkspace({
                   </option>
                 ))}
               </select>
-              <span className="badge badge-emerald" style={{ fontSize: '0.65rem' }}>
+              <span className="badge badge-aquamarine" style={{ fontSize: '0.8rem' }}>
                 ⭐ {((profile?.rating || 490) / 100).toFixed(1)}
               </span>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-              Радиус выезда: {availability?.radiusKm || 12} км • Астана
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+              Радиус выезда: {availability?.radiusKm || 12} км &bull; Астана
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           {/* Shift Revenue Badge */}
           <button
             onClick={() => setShowStatsModal(true)}
             className="btn btn-secondary"
-            style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            style={{ padding: '0.65rem 1.25rem', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
           >
-            💰 <span>{(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸</span>
+            💰 <span style={{ fontWeight: 800, color: 'var(--aquamarine-bright)' }}>{(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸</span>
             <span style={{ color: 'var(--text-muted)' }}>({shiftStats?.todayOrdersCount || 0} выездов)</span>
           </button>
 
-          {/* Online Toggle Button */}
+          {/* Big Tactile Shift Toggle Switch */}
           <button
             onClick={handleToggleOnline}
-            className={isOnline ? 'btn btn-emerald' : 'btn btn-secondary'}
-            style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', fontWeight: 700 }}
+            className={`shift-toggle-btn ${isOnline ? 'online' : 'offline'}`}
           >
-            {isOnline ? '🟢 На смене' : '⚪ На перерыве'}
+            {isOnline ? '🟢 Я свободен, готов к выездам' : '⚪ На перерыве'}
           </button>
         </div>
       </div>
 
-      {/* 1. ACTIVE ORDER EXECUTION VIEW (Phase 3) */}
+      {/* 1. ACTIVE ORDER EXECUTION VIEW */}
       {activeOrder ? (
-        <div className="glass-card" style={{ padding: '2rem', border: '2px solid var(--emerald)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+        <div className="glass-card" style={{ padding: '2.25rem', border: '2px solid var(--aquamarine)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.25rem' }}>
             <div>
-              <span className="badge badge-emerald" style={{ marginBottom: '0.5rem' }}>
+              <span className="badge badge-aquamarine" style={{ marginBottom: '0.65rem' }}>
                 ⚡ Активный заказ в исполнении
               </span>
-              <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.25rem' }}>
+              <h2 style={{ fontSize: '1.65rem', fontWeight: 900, marginTop: '0.35rem', color: '#FFFFFF' }}>
                 {activeOrder.status === 'PROVIDER_SELECTED' && '✓ Клиент выбрал вас! Готовьтесь к выезду'}
-                {activeOrder.status === 'EN_ROUTE' && '🚗 Вы в пути к клиенту'}
+                {activeOrder.status === 'EN_ROUTE' && '🚗 Вы в пути к автомобилю клиента'}
                 {activeOrder.status === 'ARRIVED' && '📍 Вы прибыли на место встречи'}
                 {activeOrder.status === 'IN_PROGRESS' && '🔧 Выполняются ремонтные работы'}
                 {activeOrder.status === 'COMPLETED' && '🎉 Заказ успешно завершен!'}
               </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                Категория: <span style={{ color: '#f8fafc', fontWeight: 600 }}>{activeOrder.request.category}</span>
-                {activeOrder.request.description ? ` • ${activeOrder.request.description}` : ''}
+              <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginTop: '0.35rem' }}>
+                Категория: <span style={{ color: '#FFFFFF', fontWeight: 800 }}>{activeOrder.request.category}</span>
+                {activeOrder.request.description ? ` &bull; ${activeOrder.request.description}` : ''}
               </p>
             </div>
 
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Согласованная цена</div>
-              <div style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--emerald)' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Согласованная стоимость</div>
+              <div style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--aquamarine-bright)' }}>
                 {activeOrder.finalAmountTiyn
                   ? `${(activeOrder.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
                   : activeOrder.agreedAmountTiyn
                   ? `${(activeOrder.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
-                  : 'По прайсу'}
+                  : 'По согласованию'}
               </div>
             </div>
           </div>
 
-          {/* CLIENT CONTACTS & NAVIGATION BAR (Phase 3) */}
+          {/* CLIENT CONTACTS & DIRECT NAVIGATION BAR */}
           <div
             style={{
-              marginTop: '1.5rem',
-              padding: '1.25rem',
-              background: 'rgba(15, 23, 42, 0.8)',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-accent)',
+              marginTop: '1.75rem',
+              padding: '1.5rem',
+              background: '#111C33',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--border-card)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               flexWrap: 'wrap',
-              gap: '1rem',
+              gap: '1.25rem',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
               <div
                 style={{
-                  width: '48px',
-                  height: '48px',
-                  borderRadius: '50%',
-                  background: 'rgba(59, 130, 246, 0.2)',
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '16px',
+                  background: 'rgba(37, 99, 235, 0.25)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '1.5rem',
+                  fontSize: '1.8rem',
                 }}
               >
                 🚗
               </div>
               <div>
-                <div style={{ fontWeight: 800, fontSize: '1rem' }}>Клиент: {clientPhone}</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                <div style={{ fontWeight: 900, fontSize: '1.2rem', color: '#FFFFFF' }}>
+                  Клиент: {clientPhone}
+                </div>
+                <div style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
                   Точка встречи: {clientLat.toFixed(4)}, {clientLng.toFixed(4)}
                 </div>
               </div>
             </div>
 
-            {/* Direct Communication & GPS Navigation Links */}
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {/* Direct Communication & GPS Navigation (2GIS / Yandex) */}
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               <a
                 href={`tel:${cleanClientPhone}`}
-                className="btn btn-emerald"
-                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem' }}
+                className="btn-touch-action btn-aquamarine"
+                style={{ minHeight: '50px', padding: '0.65rem 1.25rem', fontSize: '0.95rem' }}
               >
                 📞 Позвонить
               </a>
@@ -487,8 +477,8 @@ export default function ProviderWorkspace({
                 href={`https://wa.me/${cleanClientPhone}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-secondary"
-                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem', borderColor: '#25D366', color: '#25D366' }}
+                className="btn-touch-action btn-secondary"
+                style={{ minHeight: '50px', padding: '0.65rem 1.25rem', fontSize: '0.95rem', borderColor: '#25D366', color: '#25D366' }}
               >
                 💬 WhatsApp
               </a>
@@ -496,10 +486,10 @@ export default function ProviderWorkspace({
                 href={`https://2gis.kz/astana/geo/${clientLng}%2C${clientLat}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-secondary"
-                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem', borderColor: 'var(--primary)', color: '#93c5fd' }}
+                className="btn-touch-action btn-primary"
+                style={{ minHeight: '50px', padding: '0.65rem 1.35rem', fontSize: '0.95rem' }}
               >
-                🗺️ Навигатор (2GIS)
+                🗺️ Маршрут в 2GIS / Яндекс
               </a>
             </div>
           </div>
@@ -507,39 +497,39 @@ export default function ProviderWorkspace({
           {/* ESCROW PAYMENT GUARANTEE BADGE */}
           <div
             style={{
-              padding: '0.85rem 1rem',
-              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(16, 185, 129, 0.12) 100%)',
-              border: '1px solid rgba(59, 130, 246, 0.4)',
-              borderRadius: 'var(--radius-sm)',
+              padding: '1.1rem 1.35rem',
+              background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, rgba(6, 182, 212, 0.15) 100%)',
+              border: '1px solid var(--aquamarine)',
+              borderRadius: 'var(--radius-md)',
               display: 'flex',
               alignItems: 'center',
-              gap: '0.75rem',
-              marginTop: '1rem',
+              gap: '1rem',
+              marginTop: '1.25rem',
             }}
           >
-            <span style={{ fontSize: '1.4rem' }}>🛡️</span>
+            <span style={{ fontSize: '1.8rem' }}>🛡️</span>
             <div>
-              <div style={{ fontWeight: 800, fontSize: '0.85rem', color: '#93c5fd' }}>
-                Оплата заблокирована сервисом CarFix Escrow (100% гарантия)
+              <div style={{ fontWeight: 800, fontSize: '1rem', color: '#FFFFFF' }}>
+                Оплата заблокирована сервисом CarFix Escrow (100% гарантия выплаты)
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                Клиент внес средства на безопасный счет. Сумма за вычетом 12% сервиса будет мгновенно зачислена в ваш кошелек при завершении заказа.
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                Клиент уже внес средства. 88% от суммы будут мгновенно зачислены на ваш баланс сразу после завершения заказа.
               </div>
             </div>
           </div>
 
-          {/* STEP-BY-STEP ACTION BUTTONS (Phase 3) */}
-          <div style={{ marginTop: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+          {/* STEP-BY-STEP ACTION BUTTONS */}
+          <div style={{ marginTop: '1.75rem' }}>
+            <label style={{ display: 'block', fontSize: '1rem', fontWeight: 800, marginBottom: '0.75rem', color: '#FFFFFF' }}>
               Этапы выполнения заказа:
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
               <button
                 type="button"
                 onClick={() => handleTransitionStatus('EN_ROUTE')}
                 disabled={isUpdatingStatus || activeOrder.status !== 'PROVIDER_SELECTED'}
-                className={`btn ${activeOrder.status === 'EN_ROUTE' ? 'btn-emerald' : 'btn-secondary'}`}
-                style={{ padding: '0.75rem' }}
+                className={`btn ${activeOrder.status === 'EN_ROUTE' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                style={{ padding: '0.95rem', fontSize: '1rem' }}
               >
                 🚗 1. Я выехал (В пути)
               </button>
@@ -548,8 +538,8 @@ export default function ProviderWorkspace({
                 type="button"
                 onClick={() => handleTransitionStatus('ARRIVED')}
                 disabled={isUpdatingStatus || !['EN_ROUTE', 'PROVIDER_SELECTED'].includes(activeOrder.status)}
-                className={`btn ${activeOrder.status === 'ARRIVED' ? 'btn-emerald' : 'btn-secondary'}`}
-                style={{ padding: '0.75rem' }}
+                className={`btn ${activeOrder.status === 'ARRIVED' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                style={{ padding: '0.95rem', fontSize: '1rem' }}
               >
                 📍 2. Прибыл на место
               </button>
@@ -558,8 +548,8 @@ export default function ProviderWorkspace({
                 type="button"
                 onClick={() => handleTransitionStatus('IN_PROGRESS')}
                 disabled={isUpdatingStatus || !['ARRIVED', 'EN_ROUTE'].includes(activeOrder.status)}
-                className={`btn ${activeOrder.status === 'IN_PROGRESS' ? 'btn-emerald' : 'btn-secondary'}`}
-                style={{ padding: '0.75rem' }}
+                className={`btn ${activeOrder.status === 'IN_PROGRESS' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                style={{ padding: '0.95rem', fontSize: '1rem' }}
               >
                 🔧 3. Приступил к работе
               </button>
@@ -568,43 +558,44 @@ export default function ProviderWorkspace({
                 type="button"
                 onClick={() => handleTransitionStatus('COMPLETED')}
                 disabled={isUpdatingStatus || !['IN_PROGRESS', 'ARRIVED'].includes(activeOrder.status)}
-                className="btn btn-emerald"
-                style={{ padding: '0.75rem', fontWeight: 800 }}
+                className="btn btn-aquamarine"
+                style={{ padding: '0.95rem', fontWeight: 900, fontSize: '1rem' }}
               >
                 ✓ 4. Завершить заказ
               </button>
             </div>
           </div>
 
-          {/* MUTUAL REVIEW FORM (Phase 4) */}
+          {/* MUTUAL REVIEW FORM */}
           {activeOrder.status === 'COMPLETED' && (
-            <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'rgba(16, 185, 129, 0.08)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem' }}>
-                🌟 Оцените клиента для сообщества мастеров
+            <div style={{ marginTop: '2rem', padding: '1.75rem', background: 'rgba(6, 182, 212, 0.08)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--aquamarine)' }}>
+              <h3 style={{ fontSize: '1.35rem', fontWeight: 900, marginBottom: '0.65rem' }}>
+                🌟 Оцените водителя для сообщества мастеров
               </h3>
               {reviewSubmitted ? (
-                <div style={{ padding: '1rem', background: 'rgba(16, 185, 129, 0.2)', borderRadius: 'var(--radius-sm)', color: '#6ee7b7', fontWeight: 600 }}>
-                  ✓ Спасибо! Взаимный отзыв сохранен.
+                <div style={{ padding: '1.15rem', background: 'rgba(16, 185, 129, 0.2)', borderRadius: 'var(--radius-md)', color: '#A7F3D0', fontWeight: 700 }}>
+                  ✓ Спасибо! Взаимный отзыв клиенту отправлен.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontWeight: 600 }}>
                       Оценка клиента:
                     </label>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.65rem' }}>
                       {[1, 2, 3, 4, 5].map((star) => (
                         <button
                           key={star}
                           type="button"
                           onClick={() => setReviewRating(star)}
                           style={{
-                            background: reviewRating >= star ? 'var(--amber)' : 'rgba(255,255,255,0.1)',
-                            border: 'none',
-                            borderRadius: '8px',
-                            padding: '0.5rem 1rem',
-                            fontSize: '1.2rem',
+                            background: reviewRating >= star ? 'var(--amber)' : '#152238',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '10px',
+                            padding: '0.65rem 1.25rem',
+                            fontSize: '1.35rem',
                             cursor: 'pointer',
+                            transition: 'all 0.15s ease',
                           }}
                         >
                           ⭐ {star}
@@ -614,7 +605,7 @@ export default function ProviderWorkspace({
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontWeight: 600 }}>
                       Быстрый тег:
                     </label>
                     <select
@@ -632,10 +623,10 @@ export default function ProviderWorkspace({
                   <button
                     onClick={handleSubmitMutualReview}
                     disabled={isSubmittingReview}
-                    className="btn btn-emerald"
+                    className="btn btn-aquamarine"
                     style={{ alignSelf: 'flex-start' }}
                   >
-                    {isSubmittingReview ? 'Отправка...' : 'Отправить оценку клиенту'}
+                    {isSubmittingReview ? 'Отправка...' : 'Отправить отзыв клиенту'}
                   </button>
                 </div>
               )}
@@ -644,11 +635,11 @@ export default function ProviderWorkspace({
 
           {/* CANCEL MODAL TRIGGER */}
           {activeOrder.status !== 'COMPLETED' && (
-            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: '1.75rem', display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 onClick={() => setShowCancelModal(true)}
                 className="btn btn-secondary"
-                style={{ borderColor: '#ef4444', color: '#f87171', fontSize: '0.8rem' }}
+                style={{ borderColor: '#F43F5E', color: '#FDA4AF', fontSize: '0.9rem' }}
               >
                 ✕ Отменить заказ (Аварийно)
               </button>
@@ -656,17 +647,17 @@ export default function ProviderWorkspace({
           )}
         </div>
       ) : (
-        /* 2. LIVE RADAR OF NEARBY REQUESTS (Phase 2 & 5) */
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        /* 2. LIVE RADAR OF NEARBY REQUESTS */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
           {/* MAP & GPS VIEW */}
-          <div className="glass-card" style={{ padding: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <div className="glass-card" style={{ padding: '1.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+                <h3 style={{ fontSize: '1.35rem', fontWeight: 900, color: '#FFFFFF' }}>
                   🗺️ Карта заказов в Астане
                 </h3>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  Синий маркер — ваша геопозиция. Точки — открытые заявки автомобилистов.
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  Синий маркер — ваша локация. Точки — открытые заявки автомобилистов.
                 </p>
               </div>
               <button
@@ -674,7 +665,7 @@ export default function ProviderWorkspace({
                 onClick={() => fetchNearbyRequests()}
                 disabled={isRefreshingRequests}
                 className="btn btn-secondary"
-                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
               >
                 {isRefreshingRequests ? 'Обновление...' : '🔄 Обновить радар'}
               </button>
@@ -688,71 +679,72 @@ export default function ProviderWorkspace({
             />
           </div>
 
-          {/* NEARBY REQUESTS FEED (Phase 2) */}
-          <div className="glass-card" style={{ padding: '1.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div className="radar-scanner" style={{ width: '48px', height: '48px' }}>
-                  <div className="radar-sweep-line" />
-                  <div style={{ fontSize: '1.2rem', zIndex: 2 }}>📡</div>
+          {/* NEARBY REQUESTS FEED */}
+          <div className="glass-card" style={{ padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div className="caring-radar" style={{ width: '60px', height: '60px' }}>
+                  <div className="caring-radar-circle" />
+                  <div className="caring-radar-core" style={{ width: '36px', height: '36px', fontSize: '1.1rem' }}>📡</div>
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+                  <h3 style={{ fontSize: '1.35rem', fontWeight: 900, color: '#FFFFFF' }}>
                     Доступные заявки поблизости
                   </h3>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {isOnline ? `Поиск в радиусе ${availability?.radiusKm || 12} км • Авто-обновление 3.5с` : 'Вы оффлайн'}
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    {isOnline ? `Радиус поиска: ${availability?.radiusKm || 12} км &bull; Авто-обновление 3.5с` : 'Вы находитесь оффлайн'}
                   </div>
                 </div>
               </div>
 
-              <span className="badge badge-blue">
+              <span className="badge badge-aquamarine">
                 {nearbyRequests.length} {nearbyRequests.length === 1 ? 'заявка' : 'заявок'}
               </span>
             </div>
 
             {!isOnline ? (
-              <div style={{ padding: '2.5rem', textAlign: 'center', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏸️</div>
-                <div style={{ fontWeight: 700 }}>Вы находитесь на перерыве</div>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem', marginBottom: '1rem' }}>
-                  Включите тумблер «На смене» вверху, чтобы получать заказы с карты Астаны
+              <div style={{ padding: '3rem', textAlign: 'center', background: '#111C33', borderRadius: 'var(--radius-lg)' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.65rem' }}>⏸️</div>
+                <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#FFFFFF' }}>Вы находитесь на перерыве</div>
+                <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', marginTop: '0.35rem', marginBottom: '1.25rem' }}>
+                  Нажмите кнопку «Я свободен» вверху экрана, чтобы принимать вызовы с карты Астаны
                 </p>
-                <button onClick={handleToggleOnline} className="btn btn-emerald">
+                <button onClick={handleToggleOnline} className="btn btn-aquamarine">
                   🟢 Выйти на смену
                 </button>
               </div>
             ) : nearbyRequests.length === 0 ? (
-              <div style={{ padding: '2.5rem', textAlign: 'center', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📡</div>
-                <div style={{ fontWeight: 700 }}>Ожидание новых заявок в вашем районе...</div>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                  Переключитесь на вкладку «🚗 Автомобилист» и создайте заявку для теста
+              <div style={{ padding: '3rem', textAlign: 'center', background: '#111C33', borderRadius: 'var(--radius-lg)' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.65rem' }}>📡</div>
+                <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#FFFFFF' }}>Ожидание новых заявок в вашем районе...</div>
+                <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  Переключитесь на вкладку «🚗 Автомобилист» вверху экрана и создайте тестовую заявку
                 </p>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
                 {nearbyRequests.map((req) => (
                   <div
                     key={req.id}
                     className="glass-card"
                     style={{
-                      padding: '1.25rem',
+                      padding: '1.5rem',
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
                       flexWrap: 'wrap',
-                      gap: '1rem',
-                      border: req.myOffer ? '1px solid var(--primary)' : '1px solid var(--border-accent)',
+                      gap: '1.25rem',
+                      border: req.myOffer ? '2px solid var(--primary)' : '1px solid var(--border-card)',
+                      background: '#111C33',
                     }}
                   >
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
                         <span className="badge badge-blue">
                           {req.category === 'battery_jumpstart' ? '🔋 Прикурка АКБ' : req.category === 'electrical_starting' ? '⚡ Автоэлектрика' : '🔧 Механик'}
                         </span>
-                        <span className="badge badge-emerald">
-                          📍 ~{req.distanceKm} км от вас
+                        <span className="badge badge-aquamarine">
+                          📍 ~{req.distanceKm} км от вас (~5-10 мин)
                         </span>
                         {req.myOffer && (
                           <span className="badge badge-amber">
@@ -761,26 +753,26 @@ export default function ProviderWorkspace({
                         )}
                       </div>
 
-                      <h4 style={{ fontWeight: 800, fontSize: '1.05rem', marginTop: '0.35rem' }}>
+                      <h4 style={{ fontWeight: 900, fontSize: '1.15rem', marginTop: '0.5rem', color: '#FFFFFF' }}>
                         {req.description || 'Требуется оперативная автопомощь на дороге'}
                       </h4>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                        Создана {new Date(req.createdAt).toLocaleTimeString('ru-RU')} • Координаты: {req.location.lat.toFixed(4)}, {req.location.lng.toFixed(4)}
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                        Создана {new Date(req.createdAt).toLocaleTimeString('ru-RU')} &bull; Координаты: {req.location.lat.toFixed(4)}, {req.location.lng.toFixed(4)}
                       </div>
                     </div>
 
                     <div>
                       {req.myOffer ? (
                         <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#93c5fd' }}>
+                          <span style={{ fontSize: '0.9rem', color: '#93C5FD', fontWeight: 700 }}>
                             Ожидаем решения клиента...
                           </span>
                         </div>
                       ) : (
                         <button
                           onClick={() => handleOpenBidding(req)}
-                          className="btn btn-emerald"
-                          style={{ padding: '0.65rem 1.25rem', fontWeight: 800 }}
+                          className="btn btn-aquamarine"
+                          style={{ padding: '0.85rem 1.6rem', fontWeight: 900 }}
                         >
                           ⚡ Откликнуться (Оффер)
                         </button>
@@ -794,118 +786,101 @@ export default function ProviderWorkspace({
         </div>
       )}
 
-      {/* 3. OFFER BIDDING MODAL (Phase 2) */}
+      {/* 3. OFFER BIDDING MODAL */}
       {biddingRequest && (
         <div className="modal-overlay" onClick={() => setBiddingRequest(null)}>
           <div
             className="glass-card"
-            style={{ maxWidth: '480px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            style={{ maxWidth: '480px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
-              ⚡ Отправка предложения клиенту
+            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
+              ⚡ Отправить предложение клиенту
             </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
-              Заявка: {biddingRequest.category} (~{biddingRequest.distanceKm} км от вас)
+            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+              Заявка: {biddingRequest.category} &bull; ~{biddingRequest.distanceKm} км от вас
             </p>
 
             <form onSubmit={handleSendOfferSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               {/* Pricing Mode */}
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
                   Тип цены:
                 </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
                   <button
                     type="button"
                     onClick={() => setPricingMode('fixed')}
-                    className={`btn ${pricingMode === 'fixed' ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    className={`btn ${pricingMode === 'fixed' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                    style={{ padding: '0.65rem', fontSize: '0.9rem' }}
                   >
                     Фиксированная
                   </button>
                   <button
                     type="button"
                     onClick={() => setPricingMode('diagnostic_fee')}
-                    className={`btn ${pricingMode === 'diagnostic_fee' ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    className={`btn ${pricingMode === 'diagnostic_fee' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                    style={{ padding: '0.65rem', fontSize: '0.9rem' }}
                   >
                     Диагностика
                   </button>
                 </div>
               </div>
 
-              {/* Price Input & Quick Step Buttons */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                  Ваша стоимость (₸):
-                </label>
-                <input
-                  type="number"
-                  className="form-input"
-                  value={priceKzt}
-                  onChange={(e) => setPriceKzt(Number(e.target.value))}
-                  min={1000}
-                  step={500}
-                  required
-                />
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  {[3000, 5000, 7000, 10000].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setPriceKzt(preset)}
-                      className="chip"
-                      style={{ flex: 1, textAlign: 'center' }}
-                    >
-                      {preset} ₸
-                    </button>
-                  ))}
+              {/* Price & ETA Inputs */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+                    Сумма (₸):
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={priceKzt}
+                    onChange={(e) => setPriceKzt(Number(e.target.value))}
+                    min={1000}
+                    step={500}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+                    Время прибытия (мин):
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={etaMinutes}
+                    onChange={(e) => setEtaMinutes(Number(e.target.value))}
+                    min={5}
+                    max={120}
+                    required
+                  />
                 </div>
               </div>
 
-              {/* ETA Selector */}
+              {/* Message to Customer */}
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                  Расчетное время прибытия:
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  {[10, 15, 25, 40].map((mins) => (
-                    <button
-                      key={mins}
-                      type="button"
-                      onClick={() => setEtaMinutes(mins)}
-                      className={`btn ${etaMinutes === mins ? 'btn-emerald' : 'btn-secondary'}`}
-                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
-                    >
-                      {mins} мин
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Comment / Message */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                  Комментарий клиенту:
+                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+                  Сообщение клиенту:
                 </label>
                 <input
                   type="text"
                   className="form-input"
                   value={offerMessage}
                   onChange={(e) => setOfferMessage(e.target.value)}
-                  placeholder="Оборудование с собой, готов к выезду..."
+                  placeholder="Опишите готовность и инструмент..."
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
                 <button
                   type="submit"
                   disabled={isSendingOffer}
-                  className="btn btn-emerald"
-                  style={{ flex: 1, fontWeight: 800 }}
+                  className="btn btn-aquamarine"
+                  style={{ flex: 1, padding: '0.95rem', fontWeight: 900 }}
                 >
-                  {isSendingOffer ? 'Отправка...' : 'Отправить предложение'}
+                  {isSendingOffer ? 'Отправка...' : 'Отправить отклик'}
                 </button>
                 <button
                   type="button"
@@ -920,193 +895,144 @@ export default function ProviderWorkspace({
         </div>
       )}
 
-      {/* 4. CANCEL ORDER MODAL (Phase 3) */}
+      {/* 4. CANCEL ORDER MODAL */}
       {showCancelModal && (
         <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
           <div
             className="glass-card"
-            style={{ maxWidth: '420px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            style={{ maxWidth: '440px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
-              ⚠️ Аварийная отмена заказа
+            <h3 style={{ fontSize: '1.35rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FDA4AF' }}>
+              ✕ Аварийная отмена заказа
             </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
-              Укажите причину отмены. Заказ будет закрыт, а клиент оповещен.
+            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Укажите причину отмены. Частые необоснованные отмены снижают рейтинг в системе.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <input
-                type="text"
-                className="form-input"
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Причина отмены..."
-              />
+            <input
+              type="text"
+              className="form-input"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Причина отмены..."
+              style={{ marginBottom: '1.25rem' }}
+            />
 
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button
-                  type="button"
-                  onClick={handleCancelOrderSubmit}
-                  disabled={isUpdatingStatus}
-                  className="btn btn-secondary"
-                  style={{ flex: 1, borderColor: '#ef4444', color: '#f87171' }}
-                >
-                  {isUpdatingStatus ? 'Отмена...' : 'Подтвердить отмену'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCancelModal(false)}
-                  className="btn btn-secondary"
-                >
-                  Назад
-                </button>
-              </div>
+            <div style={{ display: 'flex', gap: '0.85rem' }}>
+              <button
+                type="button"
+                onClick={handleCancelOrderSubmit}
+                disabled={isUpdatingStatus}
+                className="btn btn-primary"
+                style={{ flex: 1, background: '#F43F5E', borderColor: '#F43F5E', fontWeight: 900 }}
+              >
+                {isUpdatingStatus ? 'Отмена...' : 'Подтвердить отмену'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(false)}
+                className="btn btn-secondary"
+              >
+                Назад
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. SHIFT STATS & EARNINGS MODAL (Phase 4) */}
+      {/* 5. SHIFT STATS & WITHDRAWAL MODAL */}
       {showStatsModal && (
         <div className="modal-overlay" onClick={() => setShowStatsModal(false)}>
           <div
             className="glass-card"
-            style={{ maxWidth: '640px', width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: '2rem', background: '#0e131f' }}
+            style={{ maxWidth: '520px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>
-                📊 Мой доход и история смен
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1.45rem', fontWeight: 900, color: '#FFFFFF' }}>
+                💰 Кошелек & Статистика смены
               </h3>
               <button
                 onClick={() => setShowStatsModal(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.5rem', cursor: 'pointer' }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.6rem', cursor: 'pointer' }}
               >
                 ✕
               </button>
             </div>
 
-            {/* Metrics cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Оборот (GMV)</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: '#93c5fd' }}>
-                  {(shiftStats?.totalGmvTiyn ? shiftStats.totalGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
+            {/* Wallet Balance Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Выручка за сегодня</div>
+                <div style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--aquamarine-bright)', marginTop: '0.35rem' }}>
+                  {(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                  {shiftStats?.todayOrdersCount || 0} завершенных выездов
                 </div>
               </div>
 
-              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Сбор CarFix (12%)</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f87171' }}>
-                  {(shiftStats?.totalGmvTiyn ? Math.round((shiftStats.totalGmvTiyn * 0.12) / 100) : 0).toLocaleString('ru-RU')} ₸
+              <div style={{ padding: '1.25rem', background: '#111C33', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-card)' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Баланс к выводу (88%)</div>
+                <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#10B981', marginTop: '0.35rem' }}>
+                  {Math.round(((shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn * 0.88 : 0) / 100)).toLocaleString('ru-RU')} ₸
                 </div>
-              </div>
-
-              <div style={{ padding: '0.85rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.4)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Чистый доход (88%)</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 900, color: 'var(--emerald)' }}>
-                  {(shiftStats?.totalGmvTiyn ? Math.round((shiftStats.totalGmvTiyn * 0.88) / 100) : 0).toLocaleString('ru-RU')} ₸
-                </div>
-              </div>
-
-              <div style={{ padding: '0.85rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Выездов всего</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 900 }}>
-                  {shiftStats?.totalCompletedJobs || 0}
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                  Сервисный сбор 12% учтен
                 </div>
               </div>
             </div>
 
-            {/* Withdrawal Action Button */}
-            <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={() => setShowWithdrawModal(true)}
-                className="btn btn-emerald"
-                style={{ width: '100%', padding: '0.75rem', fontWeight: 800 }}
-              >
-                💳 Вывести на Kaspi Gold / Halyk Bank
-              </button>
-            </div>
-
-            {/* List of completed orders */}
-            <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-              Завершенные заказы:
-            </h4>
-
-            {shiftStats?.orders.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                Заказов пока не было.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {shiftStats?.orders.map((ord) => (
-                  <div
-                    key={ord.id}
-                    style={{
-                      padding: '0.85rem',
-                      background: 'rgba(15, 23, 42, 0.8)',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border-subtle)',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>
-                        {ord.category} • {ord.customerPhone}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {new Date(ord.completedAt).toLocaleDateString('ru-RU')} • {ord.receivedReview ? `⭐ ${ord.receivedReview.rating}` : 'Без отзыва'}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--emerald)' }}>
-                      {(ord.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Withdrawal Trigger Button */}
+            <button
+              onClick={() => {
+                setShowStatsModal(false);
+                setShowWithdrawModal(true);
+              }}
+              className="btn btn-aquamarine"
+              style={{ width: '100%', padding: '1rem', fontWeight: 900, fontSize: '1.1rem' }}
+            >
+              💳 Вывести на Kaspi Gold / Halyk
+            </button>
           </div>
         </div>
       )}
 
-      {/* 6. WITHDRAWAL MODAL (Stage 3 Fintech) */}
+      {/* 6. WITHDRAWAL FORM MODAL */}
       {showWithdrawModal && (
         <div className="modal-overlay" onClick={() => setShowWithdrawModal(false)}>
           <div
             className="glass-card"
-            style={{ maxWidth: '440px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            style={{ maxWidth: '460px', width: '100%', padding: '2.25rem', background: '#0D1627' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
-              💳 Вывод средств на карту
+            <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
+              💳 Моментальный вывод средств
             </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
-              Моментальный перевод через Kaspi Pay Gateway / Halyk Bank
+            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+              Вывод баланса мастера на банковские карты Казахстана без дополнительных комиссий.
             </p>
 
-            <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.5rem', color: '#FFFFFF' }}>
                   Банк назначения:
                 </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
                   <button
                     type="button"
                     onClick={() => setWithdrawDestinationType('KASPI_GOLD')}
-                    className={`btn ${withdrawDestinationType === 'KASPI_GOLD' ? 'btn-emerald' : 'btn-secondary'}`}
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    className={`btn ${withdrawDestinationType === 'KASPI_GOLD' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                    style={{ padding: '0.75rem', fontSize: '0.9rem' }}
                   >
                     🟡 Kaspi Gold
                   </button>
                   <button
                     type="button"
                     onClick={() => setWithdrawDestinationType('HALYK_BANK')}
-                    className={`btn ${withdrawDestinationType === 'HALYK_BANK' ? 'btn-emerald' : 'btn-secondary'}`}
-                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    className={`btn ${withdrawDestinationType === 'HALYK_BANK' ? 'btn-aquamarine' : 'btn-secondary'}`}
+                    style={{ padding: '0.75rem', fontSize: '0.9rem' }}
                   >
                     🟢 Halyk Bank
                   </button>
@@ -1114,21 +1040,21 @@ export default function ProviderWorkspace({
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
-                  Номер карты или телефон:
+                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
+                  Номер карты / телефона:
                 </label>
                 <input
                   type="text"
                   className="form-input"
                   value={withdrawCardNumber}
                   onChange={(e) => setWithdrawCardNumber(e.target.value)}
-                  placeholder="4400 4301 9988 1234 или +7 701..."
+                  placeholder="4400 0000 0000 0000"
                   required
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.4rem', color: '#FFFFFF' }}>
                   Сумма вывода (₸):
                 </label>
                 <input
@@ -1142,14 +1068,14 @@ export default function ProviderWorkspace({
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
                 <button
                   type="submit"
                   disabled={isWithdrawing}
-                  className="btn btn-emerald"
-                  style={{ flex: 1, fontWeight: 800 }}
+                  className="btn btn-aquamarine"
+                  style={{ flex: 1, padding: '0.95rem', fontWeight: 900 }}
                 >
-                  {isWithdrawing ? 'Отправка...' : 'Подтвердить вывод'}
+                  {isWithdrawing ? 'Вывод...' : 'Перевести на карту'}
                 </button>
                 <button
                   type="button"

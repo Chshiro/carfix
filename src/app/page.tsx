@@ -80,35 +80,35 @@ export default function App() {
       {/* 1. TOP STICKY NAVBAR */}
       <header className="app-header">
         <div className="nav-container">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
             <div
               style={{
-                width: '38px',
-                height: '38px',
-                borderRadius: '10px',
-                background: 'linear-gradient(135deg, #3b82f6 0%, #10b981 100%)',
+                width: '44px',
+                height: '44px',
+                borderRadius: '12px',
+                background: 'linear-gradient(135deg, #2563EB 0%, #06B6D4 100%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontWeight: 900,
-                fontSize: '1.2rem',
-                color: '#ffffff',
-                boxShadow: '0 0 15px rgba(59, 130, 246, 0.4)',
+                fontSize: '1.4rem',
+                color: '#FFFFFF',
+                boxShadow: '0 0 20px var(--aquamarine-glow)',
               }}
             >
               ⚡
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontWeight: 800, fontSize: '1.2rem', letterSpacing: '-0.02em', color: '#f8fafc' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                <span style={{ fontWeight: 900, fontSize: '1.35rem', letterSpacing: '-0.02em', color: '#FFFFFF' }}>
                   CarFix
                 </span>
-                <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
-                  Астана • Operations Ready
+                <span className="badge badge-aquamarine" style={{ fontSize: '0.75rem' }}>
+                  Астана &bull; Live Dispatch
                 </span>
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                Маркетплейс оперативной автопомощи
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Платформа оперативной автопомощи
               </div>
             </div>
           </div>
@@ -119,7 +119,7 @@ export default function App() {
               onClick={() => setActiveTab('customer')}
               className={`tab-btn ${activeTab === 'customer' ? 'active' : ''}`}
             >
-              🚗 Автомобилист
+              🚗 Водитель (SOS)
             </button>
             <button
               onClick={() => setActiveTab('provider')}
@@ -130,16 +130,16 @@ export default function App() {
             <button
               onClick={() => setActiveTab('admin')}
               className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
-              style={activeTab === 'admin' ? { background: '#ef4444', color: '#ffffff' } : {}}
+              style={activeTab === 'admin' ? { background: '#4338CA', color: '#FFFFFF', boxShadow: '0 4px 18px var(--indigo-glow)' } : {}}
             >
-              🛡️ Ops (Admin)
+              🛡️ Диспетчер (Admin)
             </button>
           </div>
         </div>
       </header>
 
-      {/* 2. MAIN CONTENT AREA */}
-      <main style={{ flex: 1, maxWidth: '960px', width: '100%', margin: '0 auto', padding: '1.5rem 1rem' }}>
+      {/* 2. MAIN CONTENT CONTAINER */}
+      <main style={{ flex: 1, maxWidth: '1080px', width: '100%', margin: '0 auto', padding: '2rem 1.25rem' }}>
         {activeTab === 'customer' ? (
           <CustomerWorkspace
             token={customerToken}
@@ -165,21 +165,23 @@ export default function App() {
       <footer
         style={{
           borderTop: '1px solid var(--border-subtle)',
-          padding: '1.5rem 1rem',
-          textAlign: 'center',
-          fontSize: '0.8rem',
+          padding: '1.75rem 1.25rem',
+          fontSize: '0.85rem',
           color: 'var(--text-muted)',
-          background: 'rgba(7, 9, 14, 0.6)',
+          background: '#0A0F1D',
+          marginTop: 'auto',
         }}
       >
-        <div style={{ maxWidth: '960px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>CarFix Astana © 2026. Real-Time Spatial Automotive Dispatch.</div>
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            <span>PostGIS Geography 4326</span>
-            <span>•</span>
-            <span>JWT Auth</span>
-            <span>•</span>
-            <span>Atomic Row Locking</span>
+        <div style={{ maxWidth: '1080px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <div style={{ color: 'var(--text-secondary)' }}>
+            CarFix Astana &copy; 2026. Human-Centric Real-Time Automotive Dispatch & Escrow Platform.
+          </div>
+          <div style={{ display: 'flex', gap: '1rem', color: 'var(--text-muted)' }}>
+            <span>PostGIS SRID 4326</span>
+            <span>&bull;</span>
+            <span>Kaspi Pay QR Escrow</span>
+            <span>&bull;</span>
+            <span>Web Push & PWA</span>
           </div>
         </div>
       </footer>

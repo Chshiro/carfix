@@ -63,11 +63,11 @@ export default function AstanaMap({
         });
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors',
+          attribution: '&copy; OpenStreetMap contributors &bull; CarFix Astana',
           maxZoom: 18,
         }).addTo(map);
 
-        // Click on map to reposition customer marker
+        // Reposition customer marker on map click
         if (!readOnly && onLocationChange) {
           map.on('click', (e: any) => {
             const newCoords = { lat: e.latlng.lat, lng: e.latlng.lng };
@@ -80,12 +80,21 @@ export default function AstanaMap({
 
       const map = mapInstanceRef.current;
 
-      // Customer Marker Icon
+      // Customer Marker Icon (Pulsing Aquamarine with Car icon)
       const customerIcon = L.divIcon({
-        className: 'custom-pulse-marker',
-        html: '<div class="pulse-pin"></div>',
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        className: 'custom-customer-pin',
+        html: `
+          <div class="customer-pin-pulse">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/>
+              <circle cx="7" cy="17" r="2"/>
+              <path d="M9 17h6"/>
+              <circle cx="17" cy="17" r="2"/>
+            </svg>
+          </div>
+        `,
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
       });
 
       // Update or create Customer Marker
@@ -105,18 +114,18 @@ export default function AstanaMap({
         }
       }
 
-      // Update or create Radius Circle
+      // Update or create Radius Circle with subtle aquamarine/indigo glow
       if (circleRef.current) {
         circleRef.current.setLatLng([center.lat, center.lng]);
         circleRef.current.setRadius(radiusKm * 1000);
       } else {
         circleRef.current = L.circle([center.lat, center.lng], {
           radius: radiusKm * 1000,
-          color: '#3b82f6',
-          fillColor: '#3b82f6',
-          fillOpacity: 0.12,
+          color: '#06B6D4',
+          fillColor: '#06B6D4',
+          fillOpacity: 0.08,
           weight: 2,
-          dashArray: '6, 6',
+          dashArray: '8, 8',
         }).addTo(map);
       }
 
@@ -124,17 +133,29 @@ export default function AstanaMap({
       providerMarkersRef.current.forEach((m) => m.remove());
       providerMarkersRef.current = [];
 
-      // Add Provider pins
+      // Add Provider pins (Ultramarine Badges with Wrench icon)
       providerPins.forEach((p) => {
         const providerIcon = L.divIcon({
-          className: 'provider-marker',
-          html: `<div style="background:#10b981;border:2px solid #fff;border-radius:50%;width:18px;height:18px;box-shadow:0 0 10px #10b981;"></div>`,
-          iconSize: [18, 18],
-          iconAnchor: [9, 9],
+          className: 'provider-pin-wrap',
+          html: `
+            <div class="provider-pin-badge" title="${p.name}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+          `,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
         });
 
         const pMarker = L.marker([p.lat, p.lng], { icon: providerIcon })
-          .bindPopup(`<strong>${p.name}</strong><br/>${p.type}<br/>⭐ ${p.rating.toFixed(1)}`)
+          .bindPopup(`
+            <div style="font-family:'Plus Jakarta Sans',sans-serif; color:#0A0F1D; min-width:140px; padding:2px;">
+              <strong style="font-size:14px; color:#1E293B;">${p.name}</strong><br/>
+              <span style="font-size:12px; color:#475569;">${p.type}</span><br/>
+              <span style="display:inline-block; margin-top:4px; font-weight:700; color:#2563EB; font-size:13px;">⭐ ${(p.rating > 50 ? p.rating / 100 : p.rating).toFixed(1)}</span>
+            </div>
+          `)
           .addTo(map);
 
         providerMarkersRef.current.push(pMarker);
@@ -150,33 +171,36 @@ export default function AstanaMap({
 
   return (
     <div style={{ width: '100%', position: 'relative' }}>
-      <div ref={mapContainerRef} style={{ width: '100%', height: '340px', borderRadius: '12px' }} />
+      <div ref={mapContainerRef} style={{ width: '100%', height: '380px', borderRadius: '16px' }} />
       <div
         style={{
           position: 'absolute',
-          bottom: '12px',
-          left: '12px',
-          background: 'rgba(7, 9, 14, 0.85)',
-          backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          borderRadius: '8px',
-          padding: '4px 10px',
-          fontSize: '0.75rem',
-          color: '#94a3b8',
+          bottom: '14px',
+          left: '14px',
+          background: 'rgba(10, 15, 29, 0.9)',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid #192642',
+          borderRadius: '10px',
+          padding: '6px 14px',
+          fontSize: '0.85rem',
+          color: '#E2E8F0',
+          fontWeight: 600,
           zIndex: 400,
           display: 'flex',
-          gap: '12px',
+          alignItems: 'center',
+          gap: '16px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
         }}
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ width: '8px', height: '8px', background: '#3b82f6', borderRadius: '50%' }}></span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ width: '10px', height: '10px', background: '#06B6D4', borderRadius: '50%', boxShadow: '0 0 8px #06B6D4' }}></span>
           Место поломки
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ width: '8px', height: '8px', background: '#10b981', borderRadius: '50%' }}></span>
-          Мастера в онлайне
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ width: '10px', height: '10px', background: '#2563EB', borderRadius: '50%', boxShadow: '0 0 8px #2563EB' }}></span>
+          Мастера онлайн ({providerPins.length})
         </span>
-        <span>Радиус: {radiusKm} км</span>
+        <span style={{ color: '#94A3B8' }}>Радиус: {radiusKm} км</span>
       </div>
     </div>
   );
