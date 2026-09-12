@@ -57,6 +57,26 @@ export async function verifyAuthToken(token: string): Promise<TokenPayload> {
   }
 }
 
+interface AuthUserCacheEntry {
+  user: AuthUser;
+  cachedAt: number;
+}
+
+const authUserCache = new Map<string, AuthUserCacheEntry>();
+const AUTH_CACHE_TTL_MS = 30 * 1000; // 30 seconds TTL
+
+export function invalidateAuthUserCache(userId?: string) {
+  if (userId) {
+    for (const [key, entry] of authUserCache.entries()) {
+      if (entry.user.id === userId) {
+        authUserCache.delete(key);
+      }
+    }
+  } else {
+    authUserCache.clear();
+  }
+}
+
 /**
  * Extracts and verifies current user from Authorization: Bearer <token>
  */
@@ -69,6 +89,14 @@ export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
   const token = authHeader.substring(7).trim();
   if (!token) {
     return null;
+  }
+
+  const cached = authUserCache.get(token);
+  if (cached && Date.now() - cached.cachedAt < AUTH_CACHE_TTL_MS) {
+    if (cached.user.isBlocked) {
+      throw new ForbiddenError('User account is blocked');
+    }
+    return cached.user;
   }
 
   const tokenPayload = await verifyAuthToken(token);
@@ -99,13 +127,17 @@ export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
     }
   }
 
-  return {
+  const authUser: AuthUser = {
     id: user.id,
     phone: user.phone,
     roles: user.roles,
     isBlocked: user.isBlocked,
     providerId,
   };
+
+  authUserCache.set(token, { user: authUser, cachedAt: Date.now() });
+
+  return authUser;
 }
 
 /**

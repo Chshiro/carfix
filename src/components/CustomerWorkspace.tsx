@@ -113,6 +113,8 @@ export default function CustomerWorkspace({
     token: sessionToken,
     user: sessionUser,
     activeState,
+    requestOtp,
+    verifyOtp,
     loginWithPhone,
   } = useCustomerSession();
 
@@ -142,7 +144,10 @@ export default function CustomerWorkspace({
 
   // 4. Modals: Phone Auth & Order History
   const [showPhoneModal, setShowPhoneModal] = useState<boolean>(false);
+  const [otpStep, setOtpStep] = useState<'phone' | 'otp'>('phone');
   const [phoneInput, setPhoneInput] = useState<string>('+7 (701) 111-22-33');
+  const [otpCode, setOtpCode] = useState<string>('1111');
+  const [isRequestingOtp, setIsRequestingOtp] = useState<boolean>(false);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
 
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
@@ -558,17 +563,37 @@ export default function CustomerWorkspace({
     }
   };
 
-  // Phone Login Submit
-  const handlePhoneSubmit = async (e: React.FormEvent) => {
+  // Request OTP Submit
+  const handleRequestOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneInput.trim()) return;
+    setIsRequestingOtp(true);
+    try {
+      const res = await requestOtp(phoneInput.trim());
+      setOtpStep('otp');
+      if (res.demoCode) {
+        setOtpCode(res.demoCode);
+      }
+      addToast(res.message || 'SMS-код отправлен', '📩');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка отправки SMS', '❌');
+    } finally {
+      setIsRequestingOtp(false);
+    }
+  };
+
+  // Verify OTP Submit
+  const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode.trim()) return;
     setIsLoggingIn(true);
     try {
-      await loginWithPhone(phoneInput.trim());
+      await verifyOtp(phoneInput.trim(), otpCode.trim());
       setShowPhoneModal(false);
+      setOtpStep('phone');
       addToast(`Успешный вход: ${phoneInput.trim()}`, '📱');
     } catch (err: unknown) {
-      addToast(err instanceof Error ? err.message : 'Ошибка входа', '❌');
+      addToast(err instanceof Error ? err.message : 'Неверный код', '❌');
     } finally {
       setIsLoggingIn(false);
     }
@@ -1230,45 +1255,98 @@ export default function CustomerWorkspace({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ fontSize: '1.45rem', fontWeight: 900, marginBottom: '0.35rem', color: '#FFFFFF' }}>
-              📱 Вход в CarFix
+              📱 {otpStep === 'phone' ? 'Вход в CarFix' : 'Подтверждение номера'}
             </h3>
             <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Вход без пароля с мгновенной авторизацией по номеру телефона Казахстана.
+              {otpStep === 'phone'
+                ? 'Безопасный вход по SMS-коду на номер любого мобильного оператора Казахстана.'
+                : `Введите 4-значный код, отправленный на ${phoneInput}. В демо-режиме код: 1111.`}
             </p>
 
-            <form onSubmit={handlePhoneSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                  Номер телефона:
-                </label>
-                <input
-                  type="tel"
-                  className="form-input"
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="+7 (701) 000-00-00"
-                  required
-                />
-              </div>
+            {otpStep === 'phone' ? (
+              <form onSubmit={handleRequestOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                    Номер телефона:
+                  </label>
+                  <input
+                    type="tel"
+                    className="form-input"
+                    value={phoneInput}
+                    onChange={(e) => setPhoneInput(e.target.value)}
+                    placeholder="+7 (701) 000-00-00"
+                    required
+                  />
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Поддерживаются номера Kcell, Activ, Beeline, Tele2, Altel (+7 7xx)
+                  </div>
+                </div>
 
-              <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
-                <button
-                  type="submit"
-                  disabled={isLoggingIn}
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                >
-                  {isLoggingIn ? 'Вход...' : 'Войти в аккаунт'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPhoneModal(false)}
-                  className="btn btn-secondary"
-                >
-                  Отмена
-                </button>
-              </div>
-            </form>
+                <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+                  <button
+                    type="submit"
+                    disabled={isRequestingOtp}
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                  >
+                    {isRequestingOtp ? 'Отправка...' : 'Получить SMS-код ➔'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPhoneModal(false)}
+                    className="btn btn-secondary"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                      Код из SMS:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setOtpStep('phone')}
+                      style={{ background: 'none', border: 'none', color: 'var(--aquamarine-bright)', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}
+                    >
+                      Изменить номер
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    className="form-input"
+                    style={{ fontSize: '1.5rem', textAlign: 'center', letterSpacing: '0.5rem', fontWeight: 900 }}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    placeholder="1111"
+                    autoFocus
+                    required
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.85rem', marginTop: '0.5rem' }}>
+                  <button
+                    type="submit"
+                    disabled={isLoggingIn}
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                  >
+                    {isLoggingIn ? 'Проверка...' : 'Войти в аккаунт'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOtpStep('phone')}
+                    className="btn btn-secondary"
+                  >
+                    Назад
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

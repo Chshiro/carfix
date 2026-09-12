@@ -86,6 +86,55 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       expect(holdRes.kaspiPayload.deeplink).toContain('kaspi://pay');
       expect(holdRes.kaspiPayload.qrUrl).toContain('pay.kaspi.kz');
     });
+
+    it('idempotently returns existing active hold invoice without duplicating', async () => {
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 800000, etaMinutes: 15 },
+        mockProvider
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      const hold1 = await PaymentService.createHold({
+        orderId,
+        customerId: customerUserId,
+        amountTiyn: 800000,
+      });
+
+      const hold2 = await PaymentService.createHold({
+        orderId,
+        customerId: customerUserId,
+        amountTiyn: 800000,
+      });
+
+      expect(hold1.invoice.id).toBe(hold2.invoice.id);
+      expect(hold2.invoice.status).toBe('HELD');
+    });
+
+    it('rejects createHold if order belongs to a different customer', async () => {
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 800000, etaMinutes: 15 },
+        mockProvider
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      await expect(
+        PaymentService.createHold({
+          orderId,
+          customerId: 'c0000000-0000-0000-0000-000000000999',
+          amountTiyn: 800000,
+        })
+      ).rejects.toThrow(/You can only pay for your own orders/);
+    });
   });
 
   describe('2. Atomic Split & 12% Platform Fee Deduction', () => {
@@ -132,6 +181,22 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       expect(wallet.transactions.some((t) => t.type === 'PLATFORM_FEE' && t.amountTiyn === 120000)).toBe(true);
     });
 
+    it('rejects captureAndSplit if order is not in COMPLETED status', async () => {
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 500000, etaMinutes: 15 },
+        mockProvider
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      await PaymentService.createHold({ orderId, customerId: customerUserId, amountTiyn: 500000 });
+      await expect(PaymentService.captureAndSplit(orderId)).rejects.toThrow(/Order must be in COMPLETED status to capture funds/);
+    });
+
     it('rejects double-capture of the same invoice', async () => {
       const reqRes = await RequestService.createRequest(
         { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
@@ -145,6 +210,11 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       const orderId = selRes.order.id;
 
       await PaymentService.createHold({ orderId, customerId: customerUserId, amountTiyn: 500000 });
+      await OrderService.updateOrderStatus(orderId, { status: 'EN_ROUTE' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'ARRIVED' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'IN_PROGRESS' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'COMPLETED', finalAmountTiyn: 500000 }, mockProvider);
+
       await PaymentService.captureAndSplit(orderId);
 
       await expect(PaymentService.captureAndSplit(orderId)).rejects.toThrow(/already been captured/);
@@ -152,7 +222,7 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
   });
 
   describe('3. Escrow Refund on Cancellation / Dispute', () => {
-    it('refunds held funds when order is cancelled', async () => {
+    it('refunds held funds when order is cancelled directly via refundHold', async () => {
       const reqRes = await RequestService.createRequest(
         { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
         mockCustomer
@@ -170,6 +240,34 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       const customerWallet = await PaymentService.getWallet(customerUserId);
       expect(customerWallet.transactions.some((t) => t.type === 'REFUND' && t.amountTiyn === 600000)).toBe(true);
     });
+
+    it('automatically refunds hold when order is cancelled via updateOrderStatus', async () => {
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 750000, etaMinutes: 15 },
+        mockProvider
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      await PaymentService.createHold({ orderId, customerId: customerUserId, amountTiyn: 750000 });
+
+      // Cancel order with reason
+      await OrderService.updateOrderStatus(
+        orderId,
+        { status: 'CANCELLED', cancellationReason: 'Клиент отказался от услуги' },
+        mockCustomer
+      );
+
+      const invoice = await PaymentService.getInvoiceForOrder(orderId);
+      expect(invoice?.status).toBe('REFUNDED');
+
+      const customerWallet = await PaymentService.getWallet(customerUserId);
+      expect(customerWallet.transactions.some((t) => t.type === 'REFUND' && t.amountTiyn === 750000)).toBe(true);
+    });
   });
 
   describe('4. Master Wallet Withdrawal Flow (Kaspi Gold / Halyk)', () => {
@@ -185,6 +283,12 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       );
       const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
       await PaymentService.createHold({ orderId: selRes.order.id, customerId: customerUserId, amountTiyn: 1000000 });
+
+      await OrderService.updateOrderStatus(selRes.order.id, { status: 'EN_ROUTE' }, mockProvider);
+      await OrderService.updateOrderStatus(selRes.order.id, { status: 'ARRIVED' }, mockProvider);
+      await OrderService.updateOrderStatus(selRes.order.id, { status: 'IN_PROGRESS' }, mockProvider);
+      await OrderService.updateOrderStatus(selRes.order.id, { status: 'COMPLETED', finalAmountTiyn: 1000000 }, mockProvider);
+
       await PaymentService.captureAndSplit(selRes.order.id);
 
       // 2. Withdraw 5 000 ₸ (500 000 tiyn) to Kaspi Gold
@@ -236,6 +340,44 @@ describe('Stage 3: Fintech, Escrow & Monetization (12% Split, Kaspi QR, Wallets)
       const holdJson = await holdRes.json();
       expect(holdJson.status).toBe('ok');
       expect(holdJson.data.invoice.status).toBe('HELD');
+    });
+
+    it('POST /api/payments/complete-split forbids execution by non-assigned provider', async () => {
+      const reqRes = await RequestService.createRequest(
+        { category: 'battery_jumpstart', location: { lat: 51.128, lng: 71.4305 } },
+        mockCustomer
+      );
+      const offer = await OfferService.createOffer(
+        { requestId: reqRes.request.id, pricingMode: 'fixed', amountTiyn: 500000, etaMinutes: 15 },
+        mockProvider
+      );
+      const selRes = await OrderService.selectOffer({ requestId: reqRes.request.id, offerId: offer.id }, mockCustomer);
+      const orderId = selRes.order.id;
+
+      await PaymentService.createHold({ orderId, customerId: customerUserId, amountTiyn: 500000 });
+      await OrderService.updateOrderStatus(orderId, { status: 'EN_ROUTE' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'ARRIVED' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'IN_PROGRESS' }, mockProvider);
+      await OrderService.updateOrderStatus(orderId, { status: 'COMPLETED', finalAmountTiyn: 500000 }, mockProvider);
+
+      // Create token for another provider (SEED_PROVIDER_2)
+      const otherProviderToken = await createAuthToken({
+        sub: 'a2000000-0000-0000-0000-000000000002',
+        phone: '+77022223344',
+        roles: ['provider'],
+      });
+
+      const splitReq = new NextRequest('http://localhost/api/payments/complete-split', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${otherProviderToken}`,
+        },
+        body: JSON.stringify({ orderId }),
+      });
+
+      const splitRes = await splitRoute(splitReq);
+      expect(splitRes.status).toBe(403);
     });
 
     it('GET /api/payments/wallet & POST /api/payments/withdraw integration', async () => {

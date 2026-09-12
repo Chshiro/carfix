@@ -5,17 +5,16 @@ import { AppError } from '../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
-const phoneLoginSchema = z.object({
+const requestOtpSchema = z.object({
   phone: z.string().min(10, 'Номер телефона должен содержать минимум 10 цифр'),
-  code: z.string().length(4, 'Код подтверждения должен состоять из 4 цифр').optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const validated = phoneLoginSchema.parse(body);
+    const validated = requestOtpSchema.parse(body);
 
-    const result = await CustomerService.phoneLogin(validated.phone, validated.code);
+    const result = await CustomerService.requestOtp(validated.phone);
 
     return NextResponse.json(
       {
@@ -30,7 +29,7 @@ export async function POST(req: NextRequest) {
         {
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'Некорректный номер телефона',
+            message: err.errors[0]?.message || 'Некорректный номер телефона',
             details: err.format(),
           },
         },
@@ -49,12 +48,12 @@ export async function POST(req: NextRequest) {
         { status: err.statusCode }
       );
     }
-    console.error('Phone login error:', err);
+    console.error('Request OTP error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Internal server error during phone login',
+          message: 'Internal server error during OTP request',
         },
       },
       { status: 500 }

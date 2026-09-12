@@ -153,12 +153,51 @@ export function useCustomerSession() {
     }
   }, [refreshActiveState]);
 
-  // Login with phone number
-  const loginWithPhone = async (phone: string) => {
-    const res = await fetch('/api/auth/phone-login', {
+  // Request OTP code
+  const requestOtp = async (phone: string) => {
+    const res = await fetch('/api/auth/request-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.status !== 'ok') {
+      throw new Error(data.error?.message || 'Не удалось отправить код подтверждения');
+    }
+
+    return data.data as { message: string; expiresInSeconds: number; demoCode?: string };
+  };
+
+  // Verify OTP code and authenticate
+  const verifyOtp = async (phone: string, code: string) => {
+    const res = await fetch('/api/auth/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.status !== 'ok') {
+      throw new Error(data.error?.message || 'Неверный код подтверждения');
+    }
+
+    const { token: newToken, user: newUser } = data.data;
+    setToken(newToken);
+    setUser(newUser);
+    localStorage.setItem(STORAGE_TOKEN_KEY, newToken);
+    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
+
+    await refreshActiveState(newToken);
+    return newUser;
+  };
+
+  // Login with phone number (legacy/compatibility)
+  const loginWithPhone = async (phone: string, code?: string) => {
+    const res = await fetch('/api/auth/phone-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code }),
     });
 
     const data = await res.json();
@@ -191,6 +230,8 @@ export function useCustomerSession() {
     setActiveState,
     isLoadingSession,
     isHydratingState,
+    requestOtp,
+    verifyOtp,
     loginWithPhone,
     logout,
     refreshActiveState,

@@ -11,6 +11,8 @@ import {
 } from '../src/db/schema/index';
 import { CustomerService } from '../src/server/services/customer.service';
 import { POST as phoneLoginHandler } from '../src/app/api/auth/phone-login/route';
+import { POST as requestOtpHandler } from '../src/app/api/auth/request-otp/route';
+import { POST as verifyOtpHandler } from '../src/app/api/auth/verify-otp/route';
 import { GET as activeStateHandler } from '../src/app/api/customer/active/route';
 import { GET as ordersHistoryHandler } from '../src/app/api/customer/orders/route';
 import { createAuthToken } from '../src/server/auth';
@@ -27,6 +29,13 @@ describe('Slice 5: Customer MVP Lifecycle, Phone Auth & Hydration', () => {
       expect(CustomerService.normalizePhone('87029998877')).toBe('+77029998877');
       expect(CustomerService.normalizePhone('77051112233')).toBe('+77051112233');
       expect(CustomerService.normalizePhone('7771234567')).toBe('+77771234567');
+    });
+
+    it('rejects numbers with non-KZ mobile DEF prefix', () => {
+      // 727 is Almaty landline, not KZ mobile DEF code
+      expect(() => CustomerService.normalizePhone('+7 (727) 222-33-44')).toThrow(/мобильному оператору Казахстана/);
+      // 999 is Russian operator
+      expect(() => CustomerService.normalizePhone('+7 (999) 123-45-67')).toThrow(/мобильному оператору Казахстана/);
     });
 
     it('rejects invalid phone numbers with less than 10 digits', async () => {
@@ -71,6 +80,42 @@ describe('Slice 5: Customer MVP Lifecycle, Phone Auth & Hydration', () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.data.user.id).toBe('c0000000-0000-0000-0000-000000000001');
+    });
+
+    it('supports two-step OTP request and verification (POST /api/auth/request-otp & verify-otp)', async () => {
+      const phone = '+7 (777) 333-22-11';
+
+      // 1. Request OTP
+      const reqOtp = new NextRequest('http://localhost:3000/api/auth/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const resOtp = await requestOtpHandler(reqOtp);
+      expect(resOtp.status).toBe(200);
+      const jsonOtp = await resOtp.json();
+      expect(jsonOtp.status).toBe('ok');
+
+      // 2. Verify with wrong code -> 401
+      const wrongVerifyReq = new NextRequest('http://localhost:3000/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code: '9999' }),
+      });
+      const wrongRes = await verifyOtpHandler(wrongVerifyReq);
+      expect(wrongRes.status).toBe(401);
+
+      // 3. Verify with valid code (1111 in test mode) -> 200
+      const correctVerifyReq = new NextRequest('http://localhost:3000/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code: '1111' }),
+      });
+      const correctRes = await verifyOtpHandler(correctVerifyReq);
+      expect(correctRes.status).toBe(200);
+      const correctJson = await correctRes.json();
+      expect(correctJson.data.token).toBeDefined();
+      expect(correctJson.data.user.phone).toBe('+77773332211');
     });
   });
 

@@ -15,6 +15,9 @@ const verifySchema = z.object({
     .enum(['LEVEL_1_VERIFIED_SERVICE', 'LEVEL_2_VERIFIED_MASTER', 'LEVEL_3_NEW_PROVIDER'])
     .optional(),
   isBlocked: z.boolean().optional(),
+  idCardNumber: z.string().optional(),
+  taxNumberIin: z.string().length(12).optional(),
+  verificationStatus: z.enum(['PENDING', 'VERIFIED', 'REJECTED']).optional(),
 });
 
 export async function PATCH(

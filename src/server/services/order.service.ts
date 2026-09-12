@@ -14,6 +14,7 @@ import {
   NotFoundError,
 } from '../errors';
 import { AuthUser } from '../auth';
+import { PaymentService } from './payment.service';
 
 export interface SelectOfferInput {
   requestId: string;
@@ -357,6 +358,9 @@ export class OrderService {
           note: input.note || input.cancellationReason.trim(),
           createdAt: now,
         });
+
+        // Atomically refund held Escrow payment if one exists
+        await PaymentService.refundHold(order.id, input.cancellationReason.trim(), tx);
 
         return { order: updatedOrder, historyAction: 'CANCELLED' };
       }

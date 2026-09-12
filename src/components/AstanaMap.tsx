@@ -43,7 +43,7 @@ export default function AstanaMap({
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
   const circleRef = useRef<any>(null);
-  const providerMarkersRef = useRef<any[]>([]);
+  const providerMarkersRef = useRef<Map<string, any>>(new Map());
 
   useEffect(() => {
     let isMounted = true;
@@ -129,43 +129,65 @@ export default function AstanaMap({
         }).addTo(map);
       }
 
-      // Clear existing provider pins
-      providerMarkersRef.current.forEach((m) => m.remove());
-      providerMarkersRef.current = [];
+      // Diff provider pins to prevent popup disruption & memory churn
+      const existingMap = providerMarkersRef.current;
+      const currentIds = new Set(providerPins.map((p) => p.id));
 
-      // Add Provider pins (Ultramarine Badges with Wrench icon)
+      // Remove pins that disappeared
+      for (const [id, marker] of existingMap.entries()) {
+        if (!currentIds.has(id)) {
+          marker.remove();
+          existingMap.delete(id);
+        }
+      }
+
+      // Add or update Provider pins
       providerPins.forEach((p) => {
-        const providerIcon = L.divIcon({
-          className: 'provider-pin-wrap',
-          html: `
-            <div class="provider-pin-badge" title="${p.name}">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
-            </div>
-          `,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-        });
+        const existing = existingMap.get(p.id);
+        if (existing) {
+          existing.setLatLng([p.lat, p.lng]);
+        } else {
+          const providerIcon = L.divIcon({
+            className: 'provider-pin-wrap',
+            html: `
+              <div class="provider-pin-badge" title="${p.name}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+              </div>
+            `,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+          });
 
-        const pMarker = L.marker([p.lat, p.lng], { icon: providerIcon })
-          .bindPopup(`
-            <div style="font-family:'Plus Jakarta Sans',sans-serif; color:#0A0F1D; min-width:140px; padding:2px;">
-              <strong style="font-size:14px; color:#1E293B;">${p.name}</strong><br/>
-              <span style="font-size:12px; color:#475569;">${p.type}</span><br/>
-              <span style="display:inline-block; margin-top:4px; font-weight:700; color:#2563EB; font-size:13px;">⭐ ${(p.rating > 50 ? p.rating / 100 : p.rating).toFixed(1)}</span>
-            </div>
-          `)
-          .addTo(map);
+          const pMarker = L.marker([p.lat, p.lng], { icon: providerIcon })
+            .bindPopup(`
+              <div style="font-family:'Plus Jakarta Sans',sans-serif; color:#0A0F1D; min-width:140px; padding:2px;">
+                <strong style="font-size:14px; color:#1E293B;">${p.name}</strong><br/>
+                <span style="font-size:12px; color:#475569;">${p.type}</span><br/>
+                <span style="display:inline-block; margin-top:4px; font-weight:700; color:#2563EB; font-size:13px;">⭐ ${(p.rating > 50 ? p.rating / 100 : p.rating).toFixed(1)}</span>
+              </div>
+            `)
+            .addTo(map);
 
-        providerMarkersRef.current.push(pMarker);
+          existingMap.set(p.id, pMarker);
+        }
       });
     }
 
     initMap();
 
+    const providerMarkers = providerMarkersRef.current;
+
     return () => {
       isMounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+        circleRef.current = null;
+        providerMarkers.clear();
+      }
     };
   }, [center.lat, center.lng, radiusKm, providerPins, readOnly, onLocationChange]);
 

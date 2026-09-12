@@ -202,16 +202,21 @@ export function useMasterSession(initialProviderId: string = 'b1000000-0000-0000
     switchProvider(savedId);
   }, [initialProviderId, switchProvider]);
 
-  // Auto-polling for nearby requests and active state
+  // Auto-polling for nearby requests and active state (paused when tab hidden)
   useEffect(() => {
     if (!token) return;
 
-    const interval = setInterval(() => {
+    const poll = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
       refreshMasterState();
       if (!activeOrder) {
         fetchNearbyRequests();
       }
-    }, 3500);
+    };
+
+    const interval = setInterval(poll, 4500);
 
     return () => clearInterval(interval);
   }, [token, activeOrder, refreshMasterState, fetchNearbyRequests]);

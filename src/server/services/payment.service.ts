@@ -8,7 +8,9 @@ import {
   providers,
   users,
 } from '../../db/schema/index';
-import { AppError, ConflictError, NotFoundError, ValidationError } from '../errors';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+
+export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface CreateHoldInput {
   orderId: string;
@@ -63,79 +65,104 @@ export class PaymentService {
   }
 
   /**
-   * Initializes payment and holds customer funds in Escrow.
+   * Initializes payment and holds customer funds in Escrow atomically.
    */
   static async createHold(input: CreateHoldInput) {
-    const [order] = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.id, input.orderId));
-
-    if (!order) {
-      throw new NotFoundError(`Order with ID '${input.orderId}' not found`);
-    }
-
     if (input.amountTiyn <= 0) {
       throw new ValidationError('Payment amount must be greater than 0');
     }
 
-    const method = input.paymentMethod || 'KASPI_QR';
-    const qrPayload = this.generateKaspiPaymentPayload(order.id, input.amountTiyn);
+    return await db.transaction(async (tx) => {
+      const [order] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, input.orderId))
+        .for('update');
 
-    // Create payment invoice
-    const [invoice] = await db
-      .insert(paymentInvoices)
-      .values({
-        orderId: input.orderId,
-        customerId: input.customerId,
-        amountTiyn: input.amountTiyn,
-        serviceFeePercent: 12,
-        paymentMethod: method,
-        status: 'HELD', // Held in escrow
-        externalQrUrl: qrPayload.qrUrl,
-      })
-      .returning();
+      if (!order) {
+        throw new NotFoundError(`Order with ID '${input.orderId}' not found`);
+      }
 
-    // Get or create wallet for customer for audit
-    let [customerWallet] = await db
-      .select()
-      .from(wallets)
-      .where(eq(wallets.userId, input.customerId));
+      if (order.customerId !== input.customerId) {
+        throw new ForbiddenError('You can only pay for your own orders');
+      }
 
-    if (!customerWallet) {
-      const [newWallet] = await db
-        .insert(wallets)
+      // Idempotency: return existing invoice if already created and active
+      const [existingInvoice] = await tx
+        .select()
+        .from(paymentInvoices)
+        .where(eq(paymentInvoices.orderId, input.orderId))
+        .for('update');
+
+      if (existingInvoice) {
+        if (existingInvoice.status === 'HELD' || existingInvoice.status === 'CAPTURED') {
+          const qrPayload = this.generateKaspiPaymentPayload(order.id, existingInvoice.amountTiyn);
+          return {
+            invoice: existingInvoice,
+            kaspiPayload: qrPayload,
+          };
+        }
+      }
+
+      const method = input.paymentMethod || 'KASPI_QR';
+      const qrPayload = this.generateKaspiPaymentPayload(order.id, input.amountTiyn);
+
+      // Create payment invoice
+      const [invoice] = await tx
+        .insert(paymentInvoices)
         .values({
-          userId: input.customerId,
-          balanceTiyn: 0,
-          frozenTiyn: 0,
+          orderId: input.orderId,
+          customerId: input.customerId,
+          amountTiyn: input.amountTiyn,
+          serviceFeePercent: 12,
+          paymentMethod: method,
+          status: 'HELD', // Held in escrow
+          externalQrUrl: qrPayload.qrUrl,
         })
         .returning();
-      customerWallet = newWallet;
-    }
 
-    // Record HOLD transaction
-    await db.insert(transactions).values({
-      walletId: customerWallet.id,
-      orderId: input.orderId,
-      type: 'HOLD',
-      amountTiyn: input.amountTiyn,
-      feeTiyn: 0,
-      providerPaymentId: invoice.id,
-      status: 'SUCCESS',
+      // Get or create wallet for customer for audit
+      let [customerWallet] = await tx
+        .select()
+        .from(wallets)
+        .where(eq(wallets.userId, input.customerId))
+        .for('update');
+
+      if (!customerWallet) {
+        const [newWallet] = await tx
+          .insert(wallets)
+          .values({
+            userId: input.customerId,
+            balanceTiyn: 0,
+            frozenTiyn: 0,
+          })
+          .returning();
+        customerWallet = newWallet;
+      }
+
+      // Record HOLD transaction
+      await tx.insert(transactions).values({
+        walletId: customerWallet.id,
+        orderId: input.orderId,
+        type: 'HOLD',
+        amountTiyn: input.amountTiyn,
+        feeTiyn: 0,
+        providerPaymentId: invoice.id,
+        status: 'SUCCESS',
+      });
+
+      return {
+        invoice,
+        kaspiPayload: qrPayload,
+      };
     });
-
-    return {
-      invoice,
-      kaspiPayload: qrPayload,
-    };
   }
 
   /**
    * Captures held funds, deducts 12% platform fee, and credits 88% to provider wallet.
    * Executes inside atomic transaction with row locks to prevent race conditions.
    */
-  static async captureAndSplit(orderId: string): Promise<SplitResult> {
+  static async captureAndSplit(orderId: string, expectedProviderId?: string): Promise<SplitResult> {
     return await db.transaction(async (tx) => {
       // 1. Lock invoice with FOR UPDATE
       const [invoice] = await tx
@@ -156,7 +183,7 @@ export class PaymentService {
         throw new ConflictError(`Cannot capture refunded invoice for order '${orderId}'`);
       }
 
-      // 2. Fetch order and provider
+      // 2. Fetch and lock order with FOR UPDATE
       const [order] = await tx
         .select()
         .from(orders)
@@ -165,6 +192,14 @@ export class PaymentService {
 
       if (!order) {
         throw new NotFoundError(`Order '${orderId}' not found`);
+      }
+
+      if (order.status !== 'COMPLETED') {
+        throw new ConflictError('Order must be in COMPLETED status to capture funds');
+      }
+
+      if (expectedProviderId && order.providerId !== expectedProviderId) {
+        throw new ForbiddenError('You are not the assigned provider for this order');
       }
 
       const [provider] = await tx
@@ -258,9 +293,14 @@ export class PaymentService {
 
   /**
    * Releases and refunds Escrow hold to the customer.
+   * Can be executed within an existing transaction (externalTx) or a standalone transaction.
    */
-  static async refundHold(orderId: string, reason: string): Promise<void> {
-    await db.transaction(async (tx) => {
+  static async refundHold(
+    orderId: string,
+    reason: string,
+    externalTx?: DbTransaction
+  ): Promise<void> {
+    const runInTx = async (tx: DbTransaction) => {
       const [invoice] = await tx
         .select()
         .from(paymentInvoices)
@@ -268,11 +308,18 @@ export class PaymentService {
         .for('update');
 
       if (!invoice) {
-        throw new NotFoundError(`Invoice for order '${orderId}' not found`);
+        if (!externalTx) {
+          throw new NotFoundError(`Invoice for order '${orderId}' not found`);
+        }
+        return;
       }
 
       if (invoice.status === 'CAPTURED') {
         throw new ConflictError('Cannot refund captured payment without dispute arbitration');
+      }
+
+      if (invoice.status === 'REFUNDED') {
+        return;
       }
 
       const now = new Date();
@@ -287,7 +334,8 @@ export class PaymentService {
       const [customerWallet] = await tx
         .select()
         .from(wallets)
-        .where(eq(wallets.userId, invoice.customerId));
+        .where(eq(wallets.userId, invoice.customerId))
+        .for('update');
 
       if (customerWallet) {
         await tx.insert(transactions).values({
@@ -301,7 +349,15 @@ export class PaymentService {
           createdAt: now,
         });
       }
-    });
+    };
+
+    if (externalTx) {
+      await runInTx(externalTx);
+    } else {
+      await db.transaction(async (tx) => {
+        await runInTx(tx);
+      });
+    }
   }
 
   /**
@@ -407,5 +463,14 @@ export class PaymentService {
         destination: `${destinationType} (•••• ${destinationAccount.slice(-4)})`,
       };
     });
+  }
+
+  static async getInvoiceForOrder(orderId: string) {
+    const [inv] = await db
+      .select()
+      .from(paymentInvoices)
+      .where(eq(paymentInvoices.orderId, orderId))
+      .limit(1);
+    return inv || null;
   }
 }

@@ -45,6 +45,8 @@ export interface ProviderAdminItem {
 export interface UpdateProviderVerificationInput {
   verificationLevel?: 'LEVEL_1_VERIFIED_SERVICE' | 'LEVEL_2_VERIFIED_MASTER' | 'LEVEL_3_NEW_PROVIDER';
   verificationStatus?: 'PENDING' | 'VERIFIED' | 'REJECTED';
+  idCardNumber?: string;
+  taxNumberIin?: string;
   isBlocked?: boolean;
   blockReason?: string;
   notes?: string;
@@ -103,7 +105,46 @@ export interface DisputeAdminItem {
   resolvedAt: Date | null;
 }
 
+/**
+ * Validates Kazakhstan 12-digit IIN (Individual Identification Number)
+ * according to the official two-pass checksum algorithm (КГД МФ РК).
+ */
+export function validateKazakhstanIin(iin: string): boolean {
+  if (!iin || typeof iin !== 'string') return false;
+  const cleaned = iin.trim();
+  if (!/^\d{12}$/.test(cleaned)) return false;
+
+  const digits = cleaned.split('').map(Number);
+
+  // Check valid century/gender digit (1-6)
+  const centuryGender = digits[6];
+  if (centuryGender < 1 || centuryGender > 6) return false;
+
+  // Pass 1
+  const w1 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  let sum1 = 0;
+  for (let i = 0; i < 11; i++) {
+    sum1 += digits[i] * w1[i];
+  }
+  let k = sum1 % 11;
+
+  if (k === 10) {
+    // Pass 2
+    const w2 = [3, 4, 5, 6, 7, 8, 9, 10, 11, 1, 2];
+    let sum2 = 0;
+    for (let i = 0; i < 11; i++) {
+      sum2 += digits[i] * w2[i];
+    }
+    k = sum2 % 11;
+  }
+
+  if (k === 10) return false;
+
+  return digits[11] === k;
+}
+
 export class AdminService {
+  static validateKazakhstanIin = validateKazakhstanIin;
   /**
    * Aggregates real-time marketplace metrics across Astana.
    */
@@ -333,6 +374,14 @@ export class AdminService {
   }
 
   /**
+   * Validates Kazakhstan 12-digit IIN (Individual Identification Number)
+   * according to the official two-pass checksum algorithm (КГД МФ РК).
+   */
+  static validateIin(iin: string): boolean {
+    return validateKazakhstanIin(iin);
+  }
+
+  /**
    * Verifies or rejects a master provider profile.
    */
   static async verifyMaster(
@@ -348,6 +397,12 @@ export class AdminService {
 
     if (!provider) {
       throw new NotFoundError(`Provider with ID '${providerId}' not found`);
+    }
+
+    if (status === 'VERIFIED' && provider.taxNumberIin) {
+      if (!validateKazakhstanIin(provider.taxNumberIin)) {
+        throw new ValidationError('Некорректный ИИН мастера (ошибка контрольного разряда РК)');
+      }
     }
 
     const now = new Date();
@@ -448,6 +503,12 @@ export class AdminService {
 
     const now = new Date();
 
+    if (input.taxNumberIin) {
+      if (!validateKazakhstanIin(input.taxNumberIin)) {
+        throw new ValidationError('Некорректный ИИН РК (ошибка контрольной суммы)');
+      }
+    }
+
     if (input.verificationLevel) {
       const allowedLevels = [
         'LEVEL_1_VERIFIED_SERVICE',
@@ -472,6 +533,17 @@ export class AdminService {
         .update(providers)
         .set({
           verificationStatus: input.verificationStatus,
+          updatedAt: now,
+        })
+        .where(eq(providers.id, providerId));
+    }
+
+    if (input.idCardNumber !== undefined || input.taxNumberIin !== undefined) {
+      await db
+        .update(providers)
+        .set({
+          ...(input.idCardNumber !== undefined ? { idCardNumber: input.idCardNumber } : {}),
+          ...(input.taxNumberIin !== undefined ? { taxNumberIin: input.taxNumberIin } : {}),
           updatedAt: now,
         })
         .where(eq(providers.id, providerId));

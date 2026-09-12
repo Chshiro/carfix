@@ -446,7 +446,7 @@ export const paymentInvoices = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    index('idx_payment_invoices_order').on(table.orderId),
+    uniqueIndex('uq_payment_invoices_order').on(table.orderId),
     index('idx_payment_invoices_customer').on(table.customerId),
   ]
 );

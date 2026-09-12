@@ -219,6 +219,55 @@ describe('Slice 4: Admin Operations, Live Marketplace Monitor & Provider Verific
       const [user2After] = await db.select().from(users).where(eq(users.id, prov2.userId));
       expect(user2After.isBlocked).toBe(false);
     });
+
+    it('validates Kazakhstan IIN checksum algorithm accurately', () => {
+      // Valid IIN: 920101350017 (checksum = 7)
+      expect(AdminService.validateKazakhstanIin('920101350017')).toBe(true);
+      // Invalid checksum: 920101350018
+      expect(AdminService.validateKazakhstanIin('920101350018')).toBe(false);
+      // Non-12-digit string
+      expect(AdminService.validateKazakhstanIin('12345')).toBe(false);
+      expect(AdminService.validateKazakhstanIin('abc9201013500')).toBe(false);
+    });
+
+    it('rejects master verification elevation when IIN checksum is invalid', async () => {
+      const badIinReq = new NextRequest(`http://localhost/api/admin/providers/${SEED_PROVIDER_1_ID}/verify`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          taxNumberIin: '920101350018', // Invalid checksum
+          idCardNumber: '045123987',
+        }),
+      });
+      const badIinRes = await verifyProviderRoute(badIinReq, { params: { id: SEED_PROVIDER_1_ID } });
+      expect(badIinRes.status).toBe(400);
+      const json = await badIinRes.json();
+      expect(json.message).toContain('Некорректный ИИН РК');
+    });
+
+    it('successfully elevates master with valid IIN and ID card number', async () => {
+      const validReq = new NextRequest(`http://localhost/api/admin/providers/${SEED_PROVIDER_1_ID}/verify`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          taxNumberIin: '920101350017', // Valid checksum
+          idCardNumber: '045123987',
+          verificationStatus: 'VERIFIED',
+        }),
+      });
+      const validRes = await verifyProviderRoute(validReq, { params: { id: SEED_PROVIDER_1_ID } });
+      expect(validRes.status).toBe(200);
+      const json = await validRes.json();
+      expect(json.data.taxNumberIin).toBe('920101350017');
+      expect(json.data.idCardNumber).toBe('045123987');
+      expect(json.data.verificationStatus).toBe('VERIFIED');
+    });
   });
 
   describe('3. Marketplace Metrics & Live Order Monitoring', () => {

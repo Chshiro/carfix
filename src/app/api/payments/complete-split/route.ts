@@ -12,11 +12,15 @@ const splitSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req, ['provider', 'admin']);
+    const authUser = await requireAuth(req, ['provider', 'admin']);
     const body = await req.json();
     const validated = splitSchema.parse(body);
 
-    const result = await PaymentService.captureAndSplit(validated.orderId);
+    const isAdmin = authUser.roles.includes('admin');
+    const result = await PaymentService.captureAndSplit(
+      validated.orderId,
+      isAdmin ? undefined : authUser.providerId
+    );
 
     return NextResponse.json({
       status: 'ok',

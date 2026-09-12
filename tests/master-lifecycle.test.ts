@@ -108,8 +108,26 @@ describe('Slice 6: Master / Provider MVP Journey & Spatial Dispatch', () => {
       const res = await masterLocationHandler(req);
       expect(res.status).toBe(200);
       const json = await res.json();
+      expect(json.status).toBe('ok');
       expect(json.data.location.lat).toBeCloseTo(newCoords.lat);
       expect(json.data.location.lng).toBeCloseTo(newCoords.lng);
+    });
+
+    it('rejects coordinates outside Astana boundaries', async () => {
+      const outsideCoords = { lat: 43.238949, lng: 76.889709 }; // Almaty
+      const req = new NextRequest('http://localhost:3000/api/master/location', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${masterToken}`,
+        },
+        body: JSON.stringify({ location: outsideCoords }),
+      });
+
+      const res = await masterLocationHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error.code).toBe('VALIDATION_ERROR');
     });
   });
 

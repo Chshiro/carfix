@@ -127,6 +127,19 @@ describe('HTTP Security & Authorization Boundary Integration Tests', () => {
       expect(body.error?.code).toBe('FORBIDDEN');
     });
 
+    it('Rejects admin user UUID from demo token minting (403 Forbidden)', async () => {
+      const req = new NextRequest('http://localhost:3000/api/auth/demo-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: '00000000-0000-0000-0000-000000000001' }),
+      });
+
+      const res = await demoTokenRoute(req);
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error?.code).toBe('FORBIDDEN');
+    });
+
     it('Production mode denies demo token endpoint unless explicitly enabled', async () => {
       const originalNodeEnv = env.NODE_ENV;
       const originalDemoMode = env.DEMO_MODE;
@@ -290,6 +303,26 @@ describe('HTTP Security & Authorization Boundary Integration Tests', () => {
       expect(body.data.matchedProviders).toBeUndefined();
 
       createdRequestId = body.data.requestId;
+    });
+
+    it('Rejects request creation with coordinates outside Astana boundaries (400 Bad Request)', async () => {
+      const req = new NextRequest('http://localhost:3000/api/requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${customerAToken}`,
+        },
+        body: JSON.stringify({
+          category: 'electrical_starting',
+          location: { lat: 43.238949, lng: 76.889709 }, // Almaty coordinates
+          description: 'За пределами Астаны',
+        }),
+      });
+
+      const res = await createRequestRoute(req);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error?.code).toBe('VALIDATION_ERROR');
     });
 
     it('User A cannot attach User B vehicle to request (403 Forbidden)', async () => {

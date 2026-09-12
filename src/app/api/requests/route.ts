@@ -9,8 +9,14 @@ export const dynamic = 'force-dynamic';
 const createRequestSchema = z.object({
   category: z.enum(['electrical_starting', 'battery_jumpstart', 'mobile_mechanic']),
   location: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
+    lat: z
+      .number()
+      .min(51.00, 'Координата широты находится вне пределов Астаны (51.00 - 51.45)')
+      .max(51.45, 'Координата широты находится вне пределов Астаны (51.00 - 51.45)'),
+    lng: z
+      .number()
+      .min(71.10, 'Координата долготы находится вне пределов Астаны (71.10 - 71.75)')
+      .max(71.75, 'Координата долготы находится вне пределов Астаны (71.10 - 71.75)'),
   }),
   description: z.string().max(1000).optional(),
   vehicleId: z.string().uuid().optional(),
