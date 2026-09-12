@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import AstanaMap, { MapCoords, ProviderPin } from './AstanaMap';
+import { useMasterSession, NearbyRequestItem } from '../lib/useMasterSession';
 import { PricingMode, OrderResult } from './CustomerWorkspace';
 
 export interface ProviderProfile {
@@ -53,510 +55,934 @@ export const DEMO_PROVIDERS: ProviderProfile[] = [
 ];
 
 interface ProviderWorkspaceProps {
-  getDemoToken: (userId?: string, providerId?: string) => Promise<string | null>;
-  createdRequestId: string | null;
-  selectedOrderResult: OrderResult | null;
+  getDemoToken?: (userId?: string, providerId?: string) => Promise<string | null>;
+  createdRequestId?: string | null;
+  selectedOrderResult?: OrderResult | null;
   setSelectedOrderResult?: (res: OrderResult | null | ((prev: OrderResult | null) => OrderResult | null)) => void;
 }
 
 export default function ProviderWorkspace({
-  getDemoToken,
   createdRequestId,
   selectedOrderResult,
   setSelectedOrderResult,
 }: ProviderWorkspaceProps) {
-  const [activeProviderIndex, setActiveProviderIndex] = useState<number>(0);
-  const activeProvider = DEMO_PROVIDERS[activeProviderIndex];
+  // 1. Master Session Hook (Phase 1)
+  const {
+    providerId,
+    profile,
+    availability,
+    activeOrder,
+    nearbyRequests,
+    shiftStats,
+    isLoading,
+    isRefreshingRequests,
+    switchProvider,
+    toggleOnline,
+    updateLocation,
+    sendOffer,
+    updateOrderStatus,
+    submitReview,
+    refreshMasterState,
+    fetchNearbyRequests,
+  } = useMasterSession();
 
-  // Bid Form State
-  const [pricingMode, setPricingMode] = useState<PricingMode>('diagnostic_fee');
+  // 2. Toasts System (Phase 5)
+  const [toasts, setToasts] = useState<Array<{ id: string; text: string; icon?: string }>>([]);
+  const addToast = useCallback((text: string, icon: string = '⚡') => {
+    const id = Math.random().toString(36).substring(7);
+    setToasts((prev) => [...prev, { id, text, icon }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
+  // 3. Offer Bidding Modal State (Phase 2)
+  const [biddingRequest, setBiddingRequest] = useState<NearbyRequestItem | null>(null);
+  const [pricingMode, setPricingMode] = useState<PricingMode>('fixed');
   const [priceKzt, setPriceKzt] = useState<number>(5000);
-  const [minPriceKzt, setMinPriceKzt] = useState<number>(10000);
-  const [maxPriceKzt, setMaxPriceKzt] = useState<number>(20000);
+  const [minPriceKzt, setMinPriceKzt] = useState<number>(8000);
+  const [maxPriceKzt, setMaxPriceKzt] = useState<number>(15000);
   const [etaMinutes, setEtaMinutes] = useState<number>(15);
-  const [message, setMessage] = useState<string>('Выезжаю с профессиональным оборудованием. Буду вовремя.');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [submitFeedback, setSubmitFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [offerMessage, setOfferMessage] = useState<string>('Выезжаю сразу со всем необходимым инструментом.');
+  const [isSendingOffer, setIsSendingOffer] = useState<boolean>(false);
 
-  // Status Action State
-  const [finalPriceKzt, setFinalPriceKzt] = useState<number>(5000);
+  // 4. Order Execution Actions State (Phase 3)
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
-  const [statusFeedback, setStatusFeedback] = useState<string | null>(null);
+  const [finalPriceKzt, setFinalPriceKzt] = useState<number>(5000);
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const [cancelReason, setCancelReason] = useState<string>('Клиент перестал отвечать на звонки');
 
-  // Submit Bid from Active Provider
-  const handleSendOffer = async () => {
-    if (!createdRequestId) {
-      alert('Нет активной открытой заявки клиента для отклика.');
-      return;
+  // 5. Mutual Review State (Phase 4)
+  const [reviewRating, setReviewRating] = useState<number>(5);
+  const [reviewTag, setReviewTag] = useState<string>('Вежливый и пунктуальный');
+  const [isSubmittingReview, setIsSubmittingReview] = useState<boolean>(false);
+  const [reviewSubmitted, setReviewSubmitted] = useState<boolean>(false);
+
+  // 6. Stats & History Modal (Phase 4)
+  const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
+
+  // Track order assignment transition to trigger celebration toast
+  const prevActiveOrderIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (activeOrder?.id && prevActiveOrderIdRef.current !== activeOrder.id) {
+      addToast('🎉 Вас выбрали исполнителем по заявке! Клиент ожидает выезда', '🚀');
     }
+    prevActiveOrderIdRef.current = activeOrder?.id || null;
+  }, [activeOrder, addToast]);
 
-    setIsSubmitting(true);
-    setSubmitFeedback(null);
+  // Master Location
+  const masterCoords: MapCoords = availability?.location || { lat: 51.135, lng: 71.428 };
+  const isOnline = availability?.isOnline ?? true;
 
+  // Toggle Shift Status Action
+  const handleToggleOnline = async () => {
     try {
-      const providerToken = await getDemoToken(undefined, activeProvider.id);
-      if (!providerToken) {
-        setSubmitFeedback({ ok: false, msg: 'Ошибка получения демо-токена мастера' });
-        return;
-      }
-
-      interface OfferPayload {
-        requestId: string;
-        pricingMode: PricingMode;
-        amountTiyn?: number;
-        minAmountTiyn?: number;
-        maxAmountTiyn?: number;
-        etaMinutes: number;
-        message?: string;
-      }
-
-      const body: OfferPayload = {
-        requestId: createdRequestId,
-        pricingMode,
-        etaMinutes,
-        message: message ? message.trim() : undefined,
-      };
-
-      if (pricingMode === 'fixed' || pricingMode === 'diagnostic_fee') {
-        body.amountTiyn = priceKzt * 100;
-      } else {
-        body.minAmountTiyn = minPriceKzt * 100;
-        body.maxAmountTiyn = maxPriceKzt * 100;
-      }
-
-      const res = await fetch('/api/offers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${providerToken}`,
-        },
-        body: JSON.stringify(body),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.status === 'ok') {
-        setSubmitFeedback({
-          ok: true,
-          msg: `✅ Оффер от «${activeProvider.name}» успешно отправлен клиенту! Переключитесь на вкладку «Режим Автомобилиста», чтобы увидеть его.`,
-        });
-      } else {
-        setSubmitFeedback({
-          ok: false,
-          msg: `❌ Ошибка: ${data.error?.message || 'Не удалось отправить предложение'}`,
-        });
-      }
-    } catch (e: unknown) {
-      setSubmitFeedback({
-        ok: false,
-        msg: `❌ Сбой сети: ${e instanceof Error ? e.message : 'Unknown error'}`,
-      });
-    } finally {
-      setIsSubmitting(false);
+      await toggleOnline(!isOnline);
+      addToast(
+        !isOnline ? '🟢 Вы вышли на смену! Радар заявок активен' : '⚪ Вы ушли на перерыв. Заявки приостановлены',
+        !isOnline ? '🟢' : '⚪'
+      );
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка смены статуса', '❌');
     }
   };
 
-  // Master updates order status via FSM
-  const handleTransitionStatus = async (nextStatus: string) => {
-    if (!selectedOrderResult) return;
-    setIsUpdatingStatus(true);
-    setStatusFeedback(null);
+  // Open Bidding Modal for a Request
+  const handleOpenBidding = (req: NearbyRequestItem) => {
+    setBiddingRequest(req);
+    if (req.category === 'battery_jumpstart') {
+      setPriceKzt(5000);
+      setOfferMessage('Выезжаю с профессиональным пусковым бустером 12V/24V.');
+    } else if (req.category === 'electrical_starting') {
+      setPriceKzt(7000);
+      setOfferMessage('С собой сканер Launch, мультиметр и инструмент для стартера.');
+    } else {
+      setPriceKzt(6000);
+      setOfferMessage('Мобильный механик. Инструмент и домкрат в наличии.');
+    }
+    setEtaMinutes(15);
+  };
 
+  // Submit Bid Action
+  const handleSendOfferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!biddingRequest) return;
+
+    setIsSendingOffer(true);
     try {
-      const providerToken = await getDemoToken(undefined, activeProvider.id);
-      if (!providerToken) {
-        setStatusFeedback('❌ Ошибка авторизации мастера');
-        return;
-      }
-
-      const body: { status: string; finalAmountTiyn?: number; note?: string } = {
-        status: nextStatus,
-      };
-
-      if (nextStatus === 'COMPLETED') {
-        body.finalAmountTiyn = finalPriceKzt * 100;
-        body.note = `Работы завершены. Оплата: ${finalPriceKzt.toLocaleString()} ₸`;
-      } else if (nextStatus === 'EN_ROUTE') {
-        body.note = 'Мастер выехал к автомобилю';
-      } else if (nextStatus === 'ARRIVED') {
-        body.note = 'Мастер прибыл на место поломки';
-      } else if (nextStatus === 'IN_PROGRESS') {
-        body.note = 'Мастер приступил к диагностике и ремонту';
-      }
-
-      const res = await fetch(`/api/orders/${selectedOrderResult.order.id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${providerToken}`,
-        },
-        body: JSON.stringify(body),
+      await sendOffer({
+        requestId: biddingRequest.id,
+        pricingMode,
+        amountKzt: priceKzt,
+        minKzt: minPriceKzt,
+        maxKzt: maxPriceKzt,
+        etaMinutes,
+        message: offerMessage,
       });
 
-      const data = await res.json();
-      if (res.ok && data.status === 'ok') {
-        setStatusFeedback(`✓ Статус успешно изменен на: ${nextStatus}`);
-        if (setSelectedOrderResult) {
-          setSelectedOrderResult((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  order: {
-                    ...prev.order,
-                    status: nextStatus,
-                    finalAmountTiyn: nextStatus === 'COMPLETED' ? finalPriceKzt * 100 : prev.order.finalAmountTiyn,
-                  },
-                }
-              : null
-          );
-        }
-      } else {
-        setStatusFeedback(`❌ Ошибка: ${data.error?.message || 'Сбой'}`);
+      setBiddingRequest(null);
+      addToast(`Предложение на ${priceKzt.toLocaleString('ru-RU')} ₸ успешно отправлено клиенту!`, '✓');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка отправки оффера', '❌');
+    } finally {
+      setIsSendingOffer(false);
+    }
+  };
+
+  // Status Machine Transitions Action (Phase 3)
+  const handleTransitionStatus = async (nextStatus: string) => {
+    if (!activeOrder) return;
+    setIsUpdatingStatus(true);
+    try {
+      await updateOrderStatus(
+        activeOrder.id,
+        nextStatus,
+        nextStatus === 'COMPLETED' ? finalPriceKzt || (activeOrder.agreedAmountTiyn ? activeOrder.agreedAmountTiyn / 100 : 5000) : undefined
+      );
+
+      if (nextStatus === 'EN_ROUTE') addToast('🚗 Статус: Вы выехали к клиенту!', '🚗');
+      if (nextStatus === 'ARRIVED') addToast('📍 Статус: Вы прибыли на место встречи!', '📍');
+      if (nextStatus === 'IN_PROGRESS') addToast('🔧 Статус: Ремонтные работы начаты!', '🔧');
+      if (nextStatus === 'COMPLETED') {
+        addToast('🎉 Заказ успешно завершен! Чек сформирован', '✓');
+        setReviewSubmitted(false);
       }
-    } catch (e: unknown) {
-      setStatusFeedback(`❌ Ошибка сети: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка смены статуса', '❌');
     } finally {
       setIsUpdatingStatus(false);
     }
   };
 
-  const isSelectedProvider = selectedOrderResult?.provider.id === activeProvider.id;
-  const currentOrderStatus = selectedOrderResult?.order.status;
+  // Cancel Order Action
+  const handleCancelOrderSubmit = async () => {
+    if (!activeOrder) return;
+    setIsUpdatingStatus(true);
+    try {
+      await updateOrderStatus(activeOrder.id, 'CANCELLED', undefined, cancelReason);
+      setShowCancelModal(false);
+      addToast('Заказ отменен', '⚠️');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка отмены', '❌');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  // Mutual Review Submission (Phase 4)
+  const handleSubmitMutualReview = async () => {
+    if (!activeOrder) return;
+    setIsSubmittingReview(true);
+    try {
+      await submitReview(activeOrder.id, reviewRating, reviewTag);
+      setReviewSubmitted(true);
+      addToast('Спасибо! Взаимный отзыв клиенту отправлен', '⭐');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Ошибка отзыва', '❌');
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
+  // Customer Phone Link
+  const clientPhone = activeOrder?.customer.phone || '+77011112233';
+  const cleanClientPhone = clientPhone.replace(/\D/g, '');
+  const clientLat = activeOrder?.request.location.lat || 51.1283;
+  const clientLng = activeOrder?.request.location.lng || 71.4305;
+
+  // Map Provider & Request Pins
+  const mapPins: ProviderPin[] = [
+    {
+      id: providerId,
+      name: `Вы: ${profile?.businessName || 'Мастер'}`,
+      type: isOnline ? '🟢 На смене' : '⚪ На перерыве',
+      lat: masterCoords.lat,
+      lng: masterCoords.lng,
+      rating: profile?.rating || 490,
+    },
+    ...nearbyRequests.map((r, idx) => ({
+      id: r.id,
+      name: `Заявка #${idx + 1}: ${r.category}`,
+      type: `${r.distanceKm} км от вас`,
+      lat: r.location.lat,
+      lng: r.location.lng,
+      rating: 500,
+    })),
+  ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* 1. MASTER PROFILE SELECTOR BAR */}
-      <div className="glass-card" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <div>
-            <span className="badge badge-emerald">Рабочее место мастера</span>
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, marginTop: '0.25rem' }}>
-              Выберите профиль мастера для симуляции
-            </h2>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
+      {/* TOASTS CONTAINER (Phase 5) */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className="toast-item">
+            <span>{toast.icon}</span>
+            <span>{toast.text}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ width: '10px', height: '10px', background: '#10b981', borderRadius: '50%', boxShadow: '0 0 10px #10b981' }}></span>
-            <span style={{ fontSize: '0.85rem', color: '#34d399', fontWeight: 700 }}>В онлайне (Астана)</span>
+        ))}
+      </div>
+
+      {/* 0. MASTER TOP BAR & SHIFT CONTROLS (Phase 1) */}
+      <div
+        className="glass-card"
+        style={{
+          padding: '1rem 1.25rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          background: 'rgba(15, 23, 42, 0.85)',
+          border: '1px solid var(--border-accent)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '12px',
+              background: isOnline ? 'linear-gradient(135deg, #10b981 0%, #3b82f6 100%)' : 'rgba(100, 116, 139, 0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '1.4rem',
+              boxShadow: isOnline ? '0 0 15px rgba(16, 185, 129, 0.4)' : 'none',
+            }}
+          >
+            👨‍🔧
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <select
+                className="form-select"
+                value={providerId}
+                onChange={(e) => switchProvider(e.target.value)}
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem', fontWeight: 700, width: 'auto' }}
+              >
+                {DEMO_PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.type})
+                  </option>
+                ))}
+              </select>
+              <span className="badge badge-emerald" style={{ fontSize: '0.65rem' }}>
+                ⭐ {((profile?.rating || 490) / 100).toFixed(1)}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+              Радиус выезда: {availability?.radiusKm || 12} км • Астана
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
-          {DEMO_PROVIDERS.map((p, idx) => (
-            <div
-              key={p.id}
-              onClick={() => {
-                setActiveProviderIndex(idx);
-                setSubmitFeedback(null);
-                setStatusFeedback(null);
-              }}
-              style={{
-                background: activeProviderIndex === idx ? 'rgba(16, 185, 129, 0.15)' : 'rgba(15, 23, 42, 0.6)',
-                border: activeProviderIndex === idx ? '2px solid #10b981' : '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '1rem',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: activeProviderIndex === idx ? '#34d399' : '#f8fafc' }}>
-                {p.name}
-              </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                {p.type}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--amber)', marginTop: '0.35rem' }}>
-                ⭐ {p.rating.toFixed(1)} ({p.completedJobs} заказов) | Радиус: {p.radiusKm} км
-              </div>
-            </div>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {/* Shift Revenue Badge */}
+          <button
+            onClick={() => setShowStatsModal(true)}
+            className="btn btn-secondary"
+            style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+          >
+            💰 <span>{(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸</span>
+            <span style={{ color: 'var(--text-muted)' }}>({shiftStats?.todayOrdersCount || 0} выездов)</span>
+          </button>
+
+          {/* Online Toggle Button */}
+          <button
+            onClick={handleToggleOnline}
+            className={isOnline ? 'btn btn-emerald' : 'btn btn-secondary'}
+            style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', fontWeight: 700 }}
+          >
+            {isOnline ? '🟢 На смене' : '⚪ На перерыве'}
+          </button>
         </div>
       </div>
 
-      {/* 2. ACCEPTED ORDER CONTROLS IF THIS PROVIDER WAS SELECTED */}
-      {selectedOrderResult && isSelectedProvider && (
-        <div className="glass-card" style={{ padding: '1.75rem', border: '2px solid #10b981' }}>
-          <span className="badge badge-emerald">🎉 Вас выбрали исполнителем!</span>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.4rem' }}>
-            Управление активным заказом
-          </h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-            Текущий статус заказа:{' '}
-            <strong style={{ color: '#34d399', fontFamily: 'var(--font-mono)' }}>{currentOrderStatus}</strong>
-          </p>
+      {/* 1. ACTIVE ORDER EXECUTION VIEW (Phase 3) */}
+      {activeOrder ? (
+        <div className="glass-card" style={{ padding: '2rem', border: '2px solid var(--emerald)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <span className="badge badge-emerald" style={{ marginBottom: '0.5rem' }}>
+                ⚡ Активный заказ в исполнении
+              </span>
+              <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.25rem' }}>
+                {activeOrder.status === 'PROVIDER_SELECTED' && '✓ Клиент выбрал вас! Готовьтесь к выезду'}
+                {activeOrder.status === 'EN_ROUTE' && '🚗 Вы в пути к клиенту'}
+                {activeOrder.status === 'ARRIVED' && '📍 Вы прибыли на место встречи'}
+                {activeOrder.status === 'IN_PROGRESS' && '🔧 Выполняются ремонтные работы'}
+                {activeOrder.status === 'COMPLETED' && '🎉 Заказ успешно завершен!'}
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                Категория: <span style={{ color: '#f8fafc', fontWeight: 600 }}>{activeOrder.request.category}</span>
+                {activeOrder.request.description ? ` • ${activeOrder.request.description}` : ''}
+              </p>
+            </div>
 
-          <div
-            style={{
-              background: 'rgba(15, 23, 42, 0.8)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              borderRadius: 'var(--radius-md)',
-              padding: '1.25rem',
-              margin: '1.25rem 0',
-            }}
-          >
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-              <div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Клиент</div>
-                <div style={{ fontWeight: 800, color: '#f8fafc', fontSize: '1.1rem' }}>
-                  Автомобилист (Астана)
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#60a5fa', marginTop: '0.2rem' }}>
-                  📍 Координаты разблокированы
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Согласованная цена</div>
-                <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#f8fafc' }}>
-                  {selectedOrderResult.offer.pricingMode === 'fixed' &&
-                    `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸`}
-                  {selectedOrderResult.offer.pricingMode === 'diagnostic_fee' &&
-                    `${((selectedOrderResult.offer.amountTiyn || 0) / 100).toLocaleString()} ₸ (Диагностика)`}
-                  {selectedOrderResult.offer.pricingMode === 'estimate_range' &&
-                    `${((selectedOrderResult.offer.minAmountTiyn || 0) / 100).toLocaleString()}–${((selectedOrderResult.offer.maxAmountTiyn || 0) / 100).toLocaleString()} ₸`}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Обещанный ETA</div>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>~ {selectedOrderResult.offer.etaMinutes} мин</div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Согласованная цена</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--emerald)' }}>
+                {activeOrder.finalAmountTiyn
+                  ? `${(activeOrder.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                  : activeOrder.agreedAmountTiyn
+                  ? `${(activeOrder.agreedAmountTiyn / 100).toLocaleString('ru-RU')} ₸`
+                  : 'По прайсу'}
               </div>
             </div>
           </div>
 
-          {/* MASTER FSM CONTROLS */}
-          <div style={{ marginTop: '1.25rem' }}>
-            <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
-              Действия мастера по заказу:
-            </h4>
+          {/* CLIENT CONTACTS & NAVIGATION BAR (Phase 3) */}
+          <div
+            style={{
+              marginTop: '1.5rem',
+              padding: '1.25rem',
+              background: 'rgba(15, 23, 42, 0.8)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-accent)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div
+                style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '50%',
+                  background: 'rgba(59, 130, 246, 0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.5rem',
+                }}
+              >
+                🚗
+              </div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '1rem' }}>Клиент: {clientPhone}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                  Точка встречи: {clientLat.toFixed(4)}, {clientLng.toFixed(4)}
+                </div>
+              </div>
+            </div>
 
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              {currentOrderStatus === 'PROVIDER_SELECTED' && (
-                <button
-                  onClick={() => handleTransitionStatus('EN_ROUTE')}
-                  disabled={isUpdatingStatus}
-                  className="btn-primary"
-                >
-                  🚗 1. Выехал к клиенту (EN_ROUTE)
-                </button>
-              )}
+            {/* Direct Communication & GPS Navigation Links */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <a
+                href={`tel:${cleanClientPhone}`}
+                className="btn btn-emerald"
+                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem' }}
+              >
+                📞 Позвонить
+              </a>
+              <a
+                href={`https://wa.me/${cleanClientPhone}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary"
+                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem', borderColor: '#25D366', color: '#25D366' }}
+              >
+                💬 WhatsApp
+              </a>
+              <a
+                href={`https://2gis.kz/astana/geo/${clientLng}%2C${clientLat}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary"
+                style={{ textDecoration: 'none', padding: '0.5rem 0.9rem', fontSize: '0.85rem', borderColor: 'var(--primary)', color: '#93c5fd' }}
+              >
+                🗺️ Навигатор (2GIS)
+              </a>
+            </div>
+          </div>
 
-              {currentOrderStatus === 'EN_ROUTE' && (
-                <button
-                  onClick={() => handleTransitionStatus('ARRIVED')}
-                  disabled={isUpdatingStatus}
-                  className="btn-primary"
-                >
-                  📍 2. Прибыл на место (ARRIVED)
-                </button>
-              )}
+          {/* STEP-BY-STEP ACTION BUTTONS (Phase 3) */}
+          <div style={{ marginTop: '1.5rem' }}>
+            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+              Этапы выполнения заказа:
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => handleTransitionStatus('EN_ROUTE')}
+                disabled={isUpdatingStatus || activeOrder.status !== 'PROVIDER_SELECTED'}
+                className={`btn ${activeOrder.status === 'EN_ROUTE' ? 'btn-emerald' : 'btn-secondary'}`}
+                style={{ padding: '0.75rem' }}
+              >
+                🚗 1. Я выехал (В пути)
+              </button>
 
-              {currentOrderStatus === 'ARRIVED' && (
-                <button
-                  onClick={() => handleTransitionStatus('IN_PROGRESS')}
-                  disabled={isUpdatingStatus}
-                  className="btn-primary"
-                >
-                  🔧 3. Приступил к работе (IN_PROGRESS)
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => handleTransitionStatus('ARRIVED')}
+                disabled={isUpdatingStatus || !['EN_ROUTE', 'PROVIDER_SELECTED'].includes(activeOrder.status)}
+                className={`btn ${activeOrder.status === 'ARRIVED' ? 'btn-emerald' : 'btn-secondary'}`}
+                style={{ padding: '0.75rem' }}
+              >
+                📍 2. Прибыл на место
+              </button>
 
-              {currentOrderStatus === 'IN_PROGRESS' && (
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => handleTransitionStatus('IN_PROGRESS')}
+                disabled={isUpdatingStatus || !['ARRIVED', 'EN_ROUTE'].includes(activeOrder.status)}
+                className={`btn ${activeOrder.status === 'IN_PROGRESS' ? 'btn-emerald' : 'btn-secondary'}`}
+                style={{ padding: '0.75rem' }}
+              >
+                🔧 3. Приступил к работе
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTransitionStatus('COMPLETED')}
+                disabled={isUpdatingStatus || !['IN_PROGRESS', 'ARRIVED'].includes(activeOrder.status)}
+                className="btn btn-emerald"
+                style={{ padding: '0.75rem', fontWeight: 800 }}
+              >
+                ✓ 4. Завершить заказ
+              </button>
+            </div>
+          </div>
+
+          {/* MUTUAL REVIEW FORM (Phase 4) */}
+          {activeOrder.status === 'COMPLETED' && (
+            <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'rgba(16, 185, 129, 0.08)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem' }}>
+                🌟 Оцените клиента для сообщества мастеров
+              </h3>
+              {reviewSubmitted ? (
+                <div style={{ padding: '1rem', background: 'rgba(16, 185, 129, 0.2)', borderRadius: 'var(--radius-sm)', color: '#6ee7b7', fontWeight: 600 }}>
+                  ✓ Спасибо! Взаимный отзыв сохранен.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block' }}>
-                      Итоговая сумма к оплате (₸):
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                      Оценка клиента:
                     </label>
-                    <input
-                      type="number"
-                      value={finalPriceKzt}
-                      onChange={(e) => setFinalPriceKzt(Number(e.target.value))}
-                      className="form-input"
-                      style={{ width: '160px' }}
-                    />
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setReviewRating(star)}
+                          style={{
+                            background: reviewRating >= star ? 'var(--amber)' : 'rgba(255,255,255,0.1)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '0.5rem 1rem',
+                            fontSize: '1.2rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ⭐ {star}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                      Быстрый тег:
+                    </label>
+                    <select
+                      className="form-select"
+                      value={reviewTag}
+                      onChange={(e) => setReviewTag(e.target.value)}
+                    >
+                      <option value="Вежливый и пунктуальный">Вежливый и пунктуальный</option>
+                      <option value="Точный адрес и быстрый доступ">Точный адрес и быстрый доступ</option>
+                      <option value="Быстрая и полная оплата">Быстрая и полная оплата</option>
+                      <option value="Рекомендую другим мастерам">Рекомендую другим мастерам</option>
+                    </select>
+                  </div>
+
                   <button
-                    onClick={() => handleTransitionStatus('COMPLETED')}
-                    disabled={isUpdatingStatus}
-                    className="btn-emerald"
-                    style={{ alignSelf: 'flex-end' }}
+                    onClick={handleSubmitMutualReview}
+                    disabled={isSubmittingReview}
+                    className="btn btn-emerald"
+                    style={{ alignSelf: 'flex-start' }}
                   >
-                    ✓ 4. Завершить заказ и расчет (COMPLETED)
+                    {isSubmittingReview ? 'Отправка...' : 'Отправить оценку клиенту'}
                   </button>
                 </div>
               )}
+            </div>
+          )}
 
-              {currentOrderStatus === 'COMPLETED' && (
-                <div style={{ color: '#34d399', fontWeight: 700 }}>
-                  ✓ Заказ успешно выполнен! Зачислено в историю выполненных работ.
-                </div>
-              )}
+          {/* CANCEL MODAL TRIGGER */}
+          {activeOrder.status !== 'COMPLETED' && (
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowCancelModal(true)}
+                className="btn btn-secondary"
+                style={{ borderColor: '#ef4444', color: '#f87171', fontSize: '0.8rem' }}
+              >
+                ✕ Отменить заказ (Аварийно)
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* 2. LIVE RADAR OF NEARBY REQUESTS (Phase 2 & 5) */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* MAP & GPS VIEW */}
+          <div className="glass-card" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+                  🗺️ Карта заказов в Астане
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Синий маркер — ваша геопозиция. Точки — открытые заявки автомобилистов.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchNearbyRequests()}
+                disabled={isRefreshingRequests}
+                className="btn btn-secondary"
+                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+              >
+                {isRefreshingRequests ? 'Обновление...' : '🔄 Обновить радар'}
+              </button>
             </div>
 
-            {statusFeedback && (
-              <div style={{ marginTop: '0.75rem', fontWeight: 600, fontSize: '0.9rem', color: '#93c5fd' }}>
-                {statusFeedback}
+            <AstanaMap
+              center={masterCoords}
+              radiusKm={availability?.radiusKm || 12}
+              onLocationChange={(coords) => updateLocation(coords.lat, coords.lng)}
+              providerPins={mapPins}
+            />
+          </div>
+
+          {/* NEARBY REQUESTS FEED (Phase 2) */}
+          <div className="glass-card" style={{ padding: '1.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div className="radar-scanner" style={{ width: '48px', height: '48px' }}>
+                  <div className="radar-sweep-line" />
+                  <div style={{ fontSize: '1.2rem', zIndex: 2 }}>📡</div>
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+                    Доступные заявки поблизости
+                  </h3>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {isOnline ? `Поиск в радиусе ${availability?.radiusKm || 12} км • Авто-обновление 3.5с` : 'Вы оффлайн'}
+                  </div>
+                </div>
+              </div>
+
+              <span className="badge badge-blue">
+                {nearbyRequests.length} {nearbyRequests.length === 1 ? 'заявка' : 'заявок'}
+              </span>
+            </div>
+
+            {!isOnline ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏸️</div>
+                <div style={{ fontWeight: 700 }}>Вы находитесь на перерыве</div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem', marginBottom: '1rem' }}>
+                  Включите тумблер «На смене» вверху, чтобы получать заказы с карты Астаны
+                </p>
+                <button onClick={handleToggleOnline} className="btn btn-emerald">
+                  🟢 Выйти на смену
+                </button>
+              </div>
+            ) : nearbyRequests.length === 0 ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📡</div>
+                <div style={{ fontWeight: 700 }}>Ожидание новых заявок в вашем районе...</div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  Переключитесь на вкладку «🚗 Автомобилист» и создайте заявку для теста
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {nearbyRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="glass-card"
+                    style={{
+                      padding: '1.25rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '1rem',
+                      border: req.myOffer ? '1px solid var(--primary)' : '1px solid var(--border-accent)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span className="badge badge-blue">
+                          {req.category === 'battery_jumpstart' ? '🔋 Прикурка АКБ' : req.category === 'electrical_starting' ? '⚡ Автоэлектрика' : '🔧 Механик'}
+                        </span>
+                        <span className="badge badge-emerald">
+                          📍 ~{req.distanceKm} км от вас
+                        </span>
+                        {req.myOffer && (
+                          <span className="badge badge-amber">
+                            ✓ Оффер отправлен ({(req.myOffer.amountTiyn ? req.myOffer.amountTiyn / 100 : 0).toLocaleString('ru-RU')} ₸)
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 style={{ fontWeight: 800, fontSize: '1.05rem', marginTop: '0.35rem' }}>
+                        {req.description || 'Требуется оперативная автопомощь на дороге'}
+                      </h4>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                        Создана {new Date(req.createdAt).toLocaleTimeString('ru-RU')} • Координаты: {req.location.lat.toFixed(4)}, {req.location.lng.toFixed(4)}
+                      </div>
+                    </div>
+
+                    <div>
+                      {req.myOffer ? (
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: '0.8rem', color: '#93c5fd' }}>
+                            Ожидаем решения клиента...
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleOpenBidding(req)}
+                          className="btn btn-emerald"
+                          style={{ padding: '0.65rem 1.25rem', fontWeight: 800 }}
+                        >
+                          ⚡ Откликнуться (Оффер)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* 3. INCOMING FEED & BID SUBMISSION FORM */}
-      {!selectedOrderResult && (
-        <div className="glass-card" style={{ padding: '1.75rem' }}>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <span className="badge badge-blue">Входящая заявка</span>
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, marginTop: '0.35rem' }}>
-              {createdRequestId ? '📍 Доступна новая заявка в вашем радиусе!' : 'Ожидание новых заявок...'}
+      {/* 3. OFFER BIDDING MODAL (Phase 2) */}
+      {biddingRequest && (
+        <div className="modal-overlay" onClick={() => setBiddingRequest(null)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '480px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              ⚡ Отправка предложения клиенту
             </h3>
-          </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Заявка: {biddingRequest.category} (~{biddingRequest.distanceKm} км от вас)
+            </p>
 
-          {createdRequestId ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div
-                style={{
-                  background: 'rgba(15, 23, 42, 0.8)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '1.25rem',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>Автомобиль требует автопомощи</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                      Радиус: в пределах 5 км от вас (Астана)
-                    </div>
-                  </div>
-                  <span className="badge badge-amber">Статус: PUBLISHED</span>
-                </div>
-              </div>
-
-              {/* Bid Form */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                    Тип ценообразования:
-                  </label>
-                  <select
-                    value={pricingMode}
-                    onChange={(e) => setPricingMode(e.target.value as PricingMode)}
-                    className="form-select"
-                  >
-                    <option value="diagnostic_fee">Выезд + диагностика (Diagnostic Fee)</option>
-                    <option value="fixed">Фиксированная стоимость (Fixed Price)</option>
-                    <option value="estimate_range">Ориентировочный диапазон (Range)</option>
-                  </select>
-                </div>
-
-                {pricingMode !== 'estimate_range' ? (
-                  <div>
-                    <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                      Стоимость (₸):
-                    </label>
-                    <input
-                      type="number"
-                      value={priceKzt}
-                      onChange={(e) => setPriceKzt(Number(e.target.value))}
-                      className="form-input"
-                    />
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                        Мин (₸):
-                      </label>
-                      <input
-                        type="number"
-                        value={minPriceKzt}
-                        onChange={(e) => setMinPriceKzt(Number(e.target.value))}
-                        className="form-input"
-                      />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                        Макс (₸):
-                      </label>
-                      <input
-                        type="number"
-                        value={maxPriceKzt}
-                        onChange={(e) => setMaxPriceKzt(Number(e.target.value))}
-                        className="form-input"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                    Время прибытия (ETA мин):
-                  </label>
-                  <input
-                    type="number"
-                    value={etaMinutes}
-                    onChange={(e) => setEtaMinutes(Number(e.target.value))}
-                    className="form-input"
-                  />
-                </div>
-              </div>
-
-              {/* Quick ETA Chips */}
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Быстрый выбор ETA:</span>
-                {[10, 15, 20, 30, 45].map((mins) => (
-                  <button
-                    key={mins}
-                    type="button"
-                    onClick={() => setEtaMinutes(mins)}
-                    className={`chip ${etaMinutes === mins ? 'active' : ''}`}
-                  >
-                    {mins} мин
-                  </button>
-                ))}
-              </div>
-
-              {/* Message to customer */}
+            <form onSubmit={handleSendOfferSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Pricing Mode */}
               <div>
-                <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                  Сообщение клиенту:
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Тип цены:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setPricingMode('fixed')}
+                    className={`btn ${pricingMode === 'fixed' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                  >
+                    Фиксированная
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPricingMode('diagnostic_fee')}
+                    className={`btn ${pricingMode === 'diagnostic_fee' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                  >
+                    Диагностика
+                  </button>
+                </div>
+              </div>
+
+              {/* Price Input & Quick Step Buttons */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Ваша стоимость (₸):
+                </label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={priceKzt}
+                  onChange={(e) => setPriceKzt(Number(e.target.value))}
+                  min={1000}
+                  step={500}
+                  required
+                />
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  {[3000, 5000, 7000, 10000].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setPriceKzt(preset)}
+                      className="chip"
+                      style={{ flex: 1, textAlign: 'center' }}
+                    >
+                      {preset} ₸
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ETA Selector */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Расчетное время прибытия:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {[10, 15, 25, 40].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setEtaMinutes(mins)}
+                      className={`btn ${etaMinutes === mins ? 'btn-emerald' : 'btn-secondary'}`}
+                      style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                    >
+                      {mins} мин
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Comment / Message */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  Комментарий клиенту:
                 </label>
                 <input
                   type="text"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
                   className="form-input"
+                  value={offerMessage}
+                  onChange={(e) => setOfferMessage(e.target.value)}
+                  placeholder="Оборудование с собой, готов к выезду..."
                 />
               </div>
 
-              {/* Submit Bid Button */}
-              <button
-                onClick={handleSendOffer}
-                disabled={isSubmitting}
-                className="btn-emerald"
-                style={{ padding: '0.9rem', fontSize: '1rem', width: '100%' }}
-              >
-                {isSubmitting ? 'Отправка предложения...' : `📩 Отправить оффер от «${activeProvider.name}»`}
-              </button>
-
-              {submitFeedback && (
-                <div
-                  style={{
-                    padding: '0.9rem 1.1rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: submitFeedback.ok ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
-                    border: `1px solid ${submitFeedback.ok ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`,
-                    color: submitFeedback.ok ? '#34d399' : '#fda4af',
-                    fontSize: '0.9rem',
-                    fontWeight: 600,
-                  }}
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button
+                  type="submit"
+                  disabled={isSendingOffer}
+                  className="btn btn-emerald"
+                  style={{ flex: 1, fontWeight: 800 }}
                 >
-                  {submitFeedback.msg}
+                  {isSendingOffer ? 'Отправка...' : 'Отправить предложение'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBiddingRequest(null)}
+                  className="btn btn-secondary"
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. CANCEL ORDER MODAL (Phase 3) */}
+      {showCancelModal && (
+        <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '420px', width: '100%', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>
+              ⚠️ Аварийная отмена заказа
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Укажите причину отмены. Заказ будет закрыт, а клиент оповещен.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <input
+                type="text"
+                className="form-input"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Причина отмены..."
+              />
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={handleCancelOrderSubmit}
+                  disabled={isUpdatingStatus}
+                  className="btn btn-secondary"
+                  style={{ flex: 1, borderColor: '#ef4444', color: '#f87171' }}
+                >
+                  {isUpdatingStatus ? 'Отмена...' : 'Подтвердить отмену'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Назад
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. SHIFT STATS & EARNINGS MODAL (Phase 4) */}
+      {showStatsModal && (
+        <div className="modal-overlay" onClick={() => setShowStatsModal(false)}>
+          <div
+            className="glass-card"
+            style={{ maxWidth: '640px', width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: '2rem', background: '#0e131f' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>
+                📊 Мой доход и история смен
+              </h3>
+              <button
+                onClick={() => setShowStatsModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.5rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Metrics cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>За сегодня</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--emerald)' }}>
+                  {(shiftStats?.todayGmvTiyn ? shiftStats.todayGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
                 </div>
-              )}
+              </div>
+
+              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Всего заработано</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 900, color: '#93c5fd' }}>
+                  {(shiftStats?.totalGmvTiyn ? shiftStats.totalGmvTiyn / 100 : 0).toLocaleString('ru-RU')} ₸
+                </div>
+              </div>
+
+              <div style={{ padding: '1rem', background: 'rgba(15, 23, 42, 0.8)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Выездов всего</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 900 }}>
+                  {shiftStats?.totalCompletedJobs || 0}
+                </div>
+              </div>
             </div>
-          ) : (
-            <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-              Сейчас нет открытых заявок. Перейдите во вкладку «Режим Автомобилиста» и создайте заявку для теста!
-            </div>
-          )}
+
+            {/* List of completed orders */}
+            <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+              Завершенные заказы:
+            </h4>
+
+            {shiftStats?.orders.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                Заказов пока не было.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {shiftStats?.orders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    style={{
+                      padding: '0.85rem',
+                      background: 'rgba(15, 23, 42, 0.8)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                        {ord.category} • {ord.customerPhone}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {new Date(ord.completedAt).toLocaleDateString('ru-RU')} • {ord.receivedReview ? `⭐ ${ord.receivedReview.rating}` : 'Без отзыва'}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--emerald)' }}>
+                      {(ord.finalAmountTiyn / 100).toLocaleString('ru-RU')} ₸
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
