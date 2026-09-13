@@ -1,27 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { CustomerService } from '../../../../server/services/customer.service';
-import { AppError } from '../../../../server/errors';
+import { AuthService } from '../../../../server/services/auth.service';
+import { getClientIp } from '../../../../server/auth/client-ip';
+import { enforceCsrf } from '../../../../server/auth/csrf';
+import { AppError, RateLimitError } from '../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
 const requestOtpSchema = z.object({
-  phone: z.string().min(10, 'Номер телефона должен содержать минимум 10 цифр'),
+  phone: z.string({ required_error: 'Номер телефона обязателен' }).min(10, 'Некорректный номер телефона'),
 });
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const validated = requestOtpSchema.parse(body);
+    enforceCsrf(req);
 
-    const result = await CustomerService.requestOtp(validated.phone);
+    const body = await req.json().catch(() => ({}));
+    const validated = requestOtpSchema.parse(body);
+    const clientIp = getClientIp(req);
+
+    const result = await AuthService.requestOtp(validated.phone, clientIp);
 
     return NextResponse.json(
       {
         status: 'ok',
         data: result,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      }
     );
   } catch (err: unknown) {
     if (err instanceof z.ZodError) {
@@ -36,6 +46,23 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    if (err instanceof RateLimitError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: err.code,
+            message: err.message,
+            details: err.details,
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(err.retryAfterSeconds),
+          },
+        }
+      );
+    }
     if (err instanceof AppError) {
       return NextResponse.json(
         {
@@ -48,12 +75,12 @@ export async function POST(req: NextRequest) {
         { status: err.statusCode }
       );
     }
-    console.error('Request OTP error:', err);
+    console.error('Request OTP unexpected error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Internal server error during OTP request',
+          message: 'Внутренняя ошибка при отправке SMS. Пожалуйста, повторите позже.',
         },
       },
       { status: 500 }

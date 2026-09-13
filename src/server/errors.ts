@@ -39,3 +39,14 @@ export class ConflictError extends AppError {
     super(message, 409, 'CONFLICT');
   }
 }
+
+export class RateLimitError extends AppError {
+  constructor(
+    message: string = 'Слишком много запросов. Пожалуйста, повторите позже.',
+    public retryAfterSeconds: number = 60,
+    details?: Record<string, unknown>
+  ) {
+    super(message, 429, 'OTP_RATE_LIMITED', { retryAfter: retryAfterSeconds, ...details });
+  }
+}
+

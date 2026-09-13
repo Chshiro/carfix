@@ -144,3 +144,18 @@ Offer acceptance must execute as an **11-step atomic database transaction**:
 11. `COMMIT`
 
 *Idempotency:* Offer uniqueness constraint `UNIQUE(request_id, provider_id)` and processed callback tracking for Telegram prevent duplicate mutations.
+
+---
+
+## ADR-016: Production Phone OTP & Server-Side Session Hardening
+
+### Context
+Stateless JWT stored in browser `localStorage` exposes auth tokens to XSS and makes session invalidation difficult. Plaintext OTPs or client-controlled role parameters create critical vulnerabilities.
+
+### Decision
+1. **Server-Side Sessions:** Store 256-bit random session tokens hashed with SHA-256 in the PostgreSQL `sessions` table. Issue `carfix_session` as an `HttpOnly`, `Secure` (in prod), `SameSite=Lax`, 30-day cookie.
+2. **HMAC-SHA256 OTP Hashing:** 6-digit crypto-random OTPs (`000000`–`999999`) are hashed with a dedicated `OTP_HMAC_SECRET` into `otp_challenges`. Plaintext OTP is never stored in DB or logged in production.
+3. **Strict Rate Limiting:** Enforce a 60s phone cooldown, 10 req/hr IP limit, max 3 verification attempts per challenge (lock/consume on 3rd failure), and automatic invalidation of older active OTPs.
+4. **Zero Privilege Escalation:** Public OTP login registers users strictly with `roles = ['motorist']`. The `provider` role is derived server-side from verified `providers` profiles, and `admin` can never be self-registered.
+5. **Pluggable SMS Gateway:** Abstract SMS delivery via `ISmsProvider` with a `MockSmsProvider` (strictly blocked in production) and `KazSmsProvider` for live SMS delivery.
+

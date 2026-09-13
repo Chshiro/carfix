@@ -12,6 +12,8 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
+import { otpChallenges, sessions, sessionsRelations } from './auth';
+
 
 // Helper to parse PostGIS geography(Point, 4326) driver value
 export function parseGeographyPoint(value: string | { lng: number; lat: number }): { lng: number; lat: number } {
@@ -468,7 +470,9 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   reviewsGiven: many(reviews, { relationName: 'reviewsGiven' }),
   reviewsReceived: many(reviews, { relationName: 'reviewsReceived' }),
   disputesOpened: many(disputes, { relationName: 'disputesOpened' }),
+  sessions: many(sessions),
 }));
+
 
 export const providersRelations = relations(providers, ({ one, many }) => ({
   user: one(users, {
@@ -581,3 +585,6 @@ export const paymentInvoicesRelations = relations(paymentInvoices, ({ one }) => 
     references: [users.id],
   }),
 }));
+
+export * from './auth';
+

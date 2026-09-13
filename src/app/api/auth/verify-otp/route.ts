@@ -1,28 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { CustomerService } from '../../../../server/services/customer.service';
+import { AuthService } from '../../../../server/services/auth.service';
+import { getClientIp } from '../../../../server/auth/client-ip';
+import { enforceCsrf } from '../../../../server/auth/csrf';
+import { createSessionCookie } from '../../../../server/auth/session';
 import { AppError } from '../../../../server/errors';
 
 export const dynamic = 'force-dynamic';
 
 const verifyOtpSchema = z.object({
-  phone: z.string().min(10, 'Номер телефона должен содержать минимум 10 цифр'),
-  code: z.string().length(4, 'Код подтверждения должен состоять из 4 цифр'),
+  phone: z.string({ required_error: 'Номер телефона обязателен' }).min(10, 'Некорректный номер телефона'),
+  code: z
+    .string({ required_error: 'Код подтверждения обязателен' })
+    .regex(/^\d{6}$/, 'Код подтверждения должен состоять ровно из 6 цифр'),
 });
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const validated = verifyOtpSchema.parse(body);
+    enforceCsrf(req);
 
-    const result = await CustomerService.verifyOtp(validated.phone, validated.code);
+    const body = await req.json().catch(() => ({}));
+    const validated = verifyOtpSchema.parse(body);
+    const clientIp = getClientIp(req);
+
+    const result = await AuthService.verifyOtp(validated.phone, validated.code, clientIp);
+
+    const cookieHeader = createSessionCookie(result.sessionToken, result.expiresAt);
 
     return NextResponse.json(
       {
         status: 'ok',
-        data: result,
+        data: {
+          user: result.user,
+        },
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          'Set-Cookie': cookieHeader,
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      }
     );
   } catch (err: unknown) {
     if (err instanceof z.ZodError) {
@@ -49,12 +67,12 @@ export async function POST(req: NextRequest) {
         { status: err.statusCode }
       );
     }
-    console.error('Verify OTP error:', err);
+    console.error('Verify OTP unexpected error:', err);
     return NextResponse.json(
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Internal server error during OTP verification',
+          message: 'Внутренняя ошибка при проверке кода',
         },
       },
       { status: 500 }

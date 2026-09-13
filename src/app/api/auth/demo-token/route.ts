@@ -15,13 +15,14 @@ const demoTokenSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  // Only available in development / test or when explicitly enabled in production
-  if (env.NODE_ENV === 'production' && env.DEMO_MODE !== 'true') {
+  // CRITICAL SECURITY: Demo authentication is completely disabled in production
+  if (env.NODE_ENV === 'production') {
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'Demo authentication disabled in production' } },
+      { error: { code: 'FORBIDDEN', message: 'Demo authentication is disabled in production' } },
       { status: 403 }
     );
   }
+
 
   try {
     const body = await req.json();
