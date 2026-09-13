@@ -3,19 +3,26 @@ import { z } from 'zod';
 import { CustomerService } from '../../../../server/services/customer.service';
 import { AppError } from '../../../../server/errors';
 
+import { enforceCsrf } from '../../../../server/auth/csrf';
+import { getClientIp } from '../../../../server/auth/client-ip';
+
 export const dynamic = 'force-dynamic';
 
 const phoneLoginSchema = z.object({
   phone: z.string().min(10, 'Номер телефона должен содержать минимум 10 цифр'),
-  code: z.string().length(4, 'Код подтверждения должен состоять из 4 цифр').optional(),
+  code: z.string().min(4).max(6).optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const validated = phoneLoginSchema.parse(body);
+    enforceCsrf(req);
 
-    const result = await CustomerService.phoneLogin(validated.phone, validated.code);
+    const body = await req.json().catch(() => ({}));
+    const validated = phoneLoginSchema.parse(body);
+    const clientIp = getClientIp(req);
+
+    const result = await CustomerService.phoneLogin(validated.phone, validated.code, clientIp);
+
 
     return NextResponse.json(
       {

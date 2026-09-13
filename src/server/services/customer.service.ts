@@ -14,6 +14,9 @@ import { ForbiddenError, UnauthorizedError, ValidationError } from '../errors';
 
 import { env } from '../../lib/env';
 
+import { AuthService } from './auth.service';
+import { normalizeKzPhone, validateKzPhone, KZ_MOBILE_PREFIXES } from '../auth/phone';
+
 export interface PhoneLoginResult {
   token: string;
   user: {
@@ -26,151 +29,66 @@ export interface PhoneLoginResult {
 export interface RequestOtpResult {
   message: string;
   expiresInSeconds: number;
+  retryAfter?: number;
   demoCode?: string;
 }
-
-export const KZ_DEF_REGEX = /^\+7(700|701|702|705|706|707|708|709|747|771|775|776|777|778)\d{7}$/;
-
-interface OtpRecord {
-  code: string;
-  expiresAt: number;
-}
-
-const otpStore = new Map<string, OtpRecord>();
 
 export class CustomerService {
   /**
    * Normalizes Kazakhstan phone numbers into E.164-like format +77XXXXXXXXX
-   * and verifies national mobile DEF codes.
    */
   static normalizePhone(phone: string): string {
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length < 10) {
-      throw new ValidationError('Номер телефона должен содержать не менее 10 цифр');
-    }
-
-    let normalized: string;
-    if (digits.length === 11 && (digits.startsWith('7') || digits.startsWith('8'))) {
-      normalized = `+7${digits.slice(1)}`;
-    } else if (digits.length === 10) {
-      normalized = `+7${digits}`;
-    } else if (digits.startsWith('7') && digits.length === 11) {
-      normalized = `+${digits}`;
-    } else {
-      normalized = `+${digits}`;
-    }
-
-    if (!KZ_DEF_REGEX.test(normalized)) {
-      throw new ValidationError(
-        'Номер телефона должен принадлежать мобильному оператору Казахстана (+7 7xx xxx xx xx)'
-      );
-    }
-
-    return normalized;
+    return normalizeKzPhone(phone);
   }
 
   /**
-   * Requests a 4-digit OTP code for phone authentication.
-   * TTL: 5 minutes. In test/dev environment, default code is '1111'.
+   * Requests a 6-digit OTP code for phone authentication via AuthService.
    */
-  static async requestOtp(rawPhone: string): Promise<RequestOtpResult> {
-    if (!rawPhone || typeof rawPhone !== 'string') {
-      throw new ValidationError('Номер телефона обязателен для получения кода');
-    }
-
-    const phone = this.normalizePhone(rawPhone);
-    const isNonProd = env.NODE_ENV !== 'production' || env.DEMO_MODE === 'true';
-    const code = isNonProd ? '1111' : Math.floor(1000 + Math.random() * 9000).toString();
-    const expiresInSeconds = 300;
-
-    otpStore.set(phone, {
-      code,
-      expiresAt: Date.now() + expiresInSeconds * 1000,
-    });
-
+  static async requestOtp(rawPhone: string, clientIp: string = '127.0.0.1'): Promise<RequestOtpResult> {
+    const result = await AuthService.requestOtp(rawPhone, clientIp);
     return {
       message: 'Код подтверждения отправлен по SMS',
-      expiresInSeconds,
-      ...(isNonProd ? { demoCode: code } : {}),
+      expiresInSeconds: result.expiresInSeconds,
+      retryAfter: result.retryAfter,
+      demoCode: result.demoCode,
     };
   }
 
   /**
-   * Verifies 4-digit OTP code and returns authenticated session token.
+   * Verifies OTP code and returns authenticated session token.
    */
-  static async verifyOtp(rawPhone: string, code: string): Promise<PhoneLoginResult> {
-    if (!rawPhone || typeof rawPhone !== 'string') {
-      throw new ValidationError('Номер телефона обязателен');
-    }
-
-    if (!code || typeof code !== 'string' || code.trim().length !== 4) {
-      throw new ValidationError('Код подтверждения должен состоять из 4 цифр');
-    }
-
-    const phone = this.normalizePhone(rawPhone);
-    const stored = otpStore.get(phone);
-    const isNonProd = env.NODE_ENV !== 'production' || env.DEMO_MODE === 'true';
-
-    const isValid =
-      (stored && stored.code === code.trim() && stored.expiresAt > Date.now()) ||
-      (isNonProd && code.trim() === '1111');
-
-    if (!isValid) {
-      throw new UnauthorizedError('Неверный или просроченный код подтверждения');
-    }
-
-    otpStore.delete(phone);
-
-    // Look up user by phone
-    let [user] = await db.select().from(users).where(eq(users.phone, phone));
-
-    if (!user) {
-      // Create new motorist user
-      const [newUser] = await db
-        .insert(users)
-        .values({
-          phone,
-          roles: ['motorist'],
-          isBlocked: false,
-        })
-        .returning();
-      user = newUser;
-    }
-
-    if (user.isBlocked) {
-      throw new ForbiddenError('Учетная запись заблокирована администратором');
-    }
-
+  static async verifyOtp(rawPhone: string, code: string, clientIp: string = '127.0.0.1'): Promise<PhoneLoginResult> {
+    const result = await AuthService.verifyOtp(rawPhone, code, clientIp);
     const token = await createAuthToken({
-      sub: user.id,
-      phone: user.phone,
-      roles: user.roles,
+      sub: result.user.id,
+      phone: result.user.phone,
+      roles: result.user.roles,
     });
 
     return {
       token,
       user: {
-        id: user.id,
-        phone: user.phone,
-        roles: user.roles,
+        id: result.user.id,
+        phone: result.user.phone,
+        roles: result.user.roles,
       },
     };
   }
 
   /**
    * Phone authentication for motorists.
-   * If code is provided, verifies OTP. In test/dev environment, allows default '1111'.
    */
-  static async phoneLogin(rawPhone: string, code?: string): Promise<PhoneLoginResult> {
+  static async phoneLogin(rawPhone: string, code?: string, clientIp: string = '127.0.0.1'): Promise<PhoneLoginResult> {
     const isNonProd = env.NODE_ENV !== 'production' || env.DEMO_MODE === 'true';
-    const otpCode = code || (isNonProd ? '1111' : undefined);
+    const otpCode = code || (isNonProd ? '123456' : undefined);
 
     if (!otpCode) {
       throw new ValidationError('Код подтверждения обязателен');
     }
 
-    return await this.verifyOtp(rawPhone, otpCode);
+    return await this.verifyOtp(rawPhone, otpCode, clientIp);
   }
+
 
   /**
    * Retrieves current active customer state (active request or in-progress/completed order).

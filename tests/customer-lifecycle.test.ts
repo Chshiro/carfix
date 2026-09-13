@@ -100,22 +100,23 @@ describe('Slice 5: Customer MVP Lifecycle, Phone Auth & Hydration', () => {
       const wrongVerifyReq = new NextRequest('http://localhost:3000/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code: '9999' }),
+        body: JSON.stringify({ phone, code: '999999' }),
       });
       const wrongRes = await verifyOtpHandler(wrongVerifyReq);
       expect(wrongRes.status).toBe(401);
 
-      // 3. Verify with valid code (1111 in test mode) -> 200
+      // 3. Verify with valid code -> 200
+      const code = jsonOtp.data.demoCode || '123456';
       const correctVerifyReq = new NextRequest('http://localhost:3000/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code: '1111' }),
+        body: JSON.stringify({ phone, code }),
       });
       const correctRes = await verifyOtpHandler(correctVerifyReq);
       expect(correctRes.status).toBe(200);
       const correctJson = await correctRes.json();
-      expect(correctJson.data.token).toBeDefined();
       expect(correctJson.data.user.phone).toBe('+77773332211');
+      expect(correctRes.headers.get('set-cookie')).toContain('carfix_session=');
     });
   });
 
