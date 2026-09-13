@@ -82,17 +82,15 @@ export function useCustomerSession() {
   // Fetch and hydrate active request/order
   const refreshActiveState = useCallback(async (authToken?: string) => {
     const currentToken = authToken || token;
-    if (!currentToken) {
-      setActiveState({ type: 'IDLE' });
-      return null;
-    }
-
     setIsHydratingState(true);
     try {
+      const headers: Record<string, string> = {};
+      if (currentToken && currentToken !== 'undefined') {
+        headers['Authorization'] = `Bearer ${currentToken}`;
+      }
+
       const res = await fetch('/api/customer/active', {
-        headers: {
-          Authorization: `Bearer ${currentToken}`,
-        },
+        headers,
       });
       const json = await res.json();
       if (res.ok && json.status === 'ok') {
@@ -110,47 +108,81 @@ export function useCustomerSession() {
     }
   }, [token]);
 
-  // Load session from localStorage on mount
+  // Bootstrap session: check /api/auth/me first (cookie session), fallback to localStorage/demo
   useEffect(() => {
-    try {
-      const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
-      const savedUser = localStorage.getItem(STORAGE_USER_KEY);
+    let isMounted = true;
 
-      if (savedToken && savedUser) {
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
-        refreshActiveState(savedToken);
-      } else {
-        // Fallback demo auto-login for seamless testing
-        fetch('/api/auth/demo-token', {
+    async function initSession() {
+      try {
+        // 1. Try resolving cookie-based session via /api/auth/me
+        const meRes = await fetch('/api/auth/me');
+        if (meRes.ok) {
+          const meJson = await meRes.json();
+          if (meJson.status === 'ok' && meJson.data?.user) {
+            if (isMounted) {
+              setUser(meJson.data.user);
+              await refreshActiveState();
+              setIsLoadingSession(false);
+              return;
+            }
+          }
+        }
+
+        // 2. Fallback: check localStorage for saved token
+        const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
+        const savedUser = localStorage.getItem(STORAGE_USER_KEY);
+
+        if (savedToken && savedToken !== 'undefined' && savedUser) {
+          if (isMounted) {
+            setToken(savedToken);
+            setUser(JSON.parse(savedUser));
+            await refreshActiveState(savedToken);
+            setIsLoadingSession(false);
+            return;
+          }
+        }
+
+        // 3. Demo fallback if no session in non-production
+        const demoRes = await fetch('/api/auth/demo-token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: 'c0000000-0000-0000-0000-000000000001' }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.status === 'ok' && data.data?.token) {
-              const defaultUser: CustomerUser = {
-                id: 'c0000000-0000-0000-0000-000000000001',
-                phone: '+77011112233',
-                roles: ['motorist'],
-              };
-              setToken(data.data.token);
-              setUser(defaultUser);
-              localStorage.setItem(STORAGE_TOKEN_KEY, data.data.token);
-              localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(defaultUser));
-              refreshActiveState(data.data.token);
-            }
-          })
-          .catch(() => {
+        });
+        const demoJson = await demoRes.json();
+        if (demoRes.ok && demoJson.status === 'ok' && demoJson.data?.token) {
+          const defaultUser: CustomerUser = {
+            id: 'c0000000-0000-0000-0000-000000000001',
+            phone: '+77011112233',
+            roles: ['motorist'],
+          };
+          if (isMounted) {
+            setToken(demoJson.data.token);
+            setUser(defaultUser);
+            localStorage.setItem(STORAGE_TOKEN_KEY, demoJson.data.token);
+            localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(defaultUser));
+            await refreshActiveState(demoJson.data.token);
+          }
+        } else {
+          if (isMounted) {
             setActiveState({ type: 'IDLE' });
-          });
+          }
+        }
+      } catch {
+        if (isMounted) {
+          setActiveState({ type: 'IDLE' });
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingSession(false);
+        }
       }
-    } catch {
-      // Ignored
-    } finally {
-      setIsLoadingSession(false);
     }
+
+    initSession();
+
+    return () => {
+      isMounted = false;
+    };
   }, [refreshActiveState]);
 
   // Request OTP code
@@ -182,13 +214,11 @@ export function useCustomerSession() {
       throw new Error(data.error?.message || 'Неверный код подтверждения');
     }
 
-    const { token: newToken, user: newUser } = data.data;
-    setToken(newToken);
+    const newUser = data.data.user;
     setUser(newUser);
-    localStorage.setItem(STORAGE_TOKEN_KEY, newToken);
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
 
-    await refreshActiveState(newToken);
+    await refreshActiveState();
     return newUser;
   };
 
@@ -206,16 +236,23 @@ export function useCustomerSession() {
     }
 
     const { token: newToken, user: newUser } = data.data;
-    setToken(newToken);
+    if (newToken) {
+      setToken(newToken);
+      localStorage.setItem(STORAGE_TOKEN_KEY, newToken);
+    }
     setUser(newUser);
-    localStorage.setItem(STORAGE_TOKEN_KEY, newToken);
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
 
     await refreshActiveState(newToken);
     return newUser;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore network errors on logout
+    }
     setToken(null);
     setUser(null);
     setActiveState({ type: 'IDLE' });

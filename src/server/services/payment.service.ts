@@ -87,6 +87,11 @@ export class PaymentService {
         throw new ForbiddenError('You can only pay for your own orders');
       }
 
+      const payableStatuses = ['PROVIDER_SELECTED', 'EN_ROUTE', 'ARRIVED', 'IN_PROGRESS'];
+      if (!payableStatuses.includes(order.status)) {
+        throw new ConflictError(`Cannot hold funds for order in '${order.status}' status`);
+      }
+
       // Idempotency: return existing invoice if already created and active
       const [existingInvoice] = await tx
         .select()
@@ -413,8 +418,8 @@ export class PaymentService {
     destinationType: 'KASPI_GOLD' | 'HALYK_BANK' | 'IBAN',
     destinationAccount: string
   ) {
-    if (amountTiyn <= 0) {
-      throw new ValidationError('Withdrawal amount must be greater than 0');
+    if (!Number.isInteger(amountTiyn) || amountTiyn < 100) {
+      throw new ValidationError('Withdrawal amount must be an integer of at least 100 tiyn (1 ₸)');
     }
 
     if (!destinationAccount || destinationAccount.trim().length < 4) {
