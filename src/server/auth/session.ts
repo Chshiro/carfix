@@ -23,19 +23,22 @@ export function hashSessionToken(token: string): string {
   return crypto.createHash('sha256').update(token.trim()).digest('hex');
 }
 
+export type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 /**
  * Creates a new server-side session in the database
  */
 export async function createSession(
   userId: string,
-  ttlSeconds: number = env.AUTH_SESSION_TTL_SECONDS
+  ttlSeconds: number = env.AUTH_SESSION_TTL_SECONDS,
+  executor: DbExecutor = db
 ): Promise<{ sessionToken: string; expiresAt: Date }> {
   const sessionToken = generateSessionToken();
   const sessionTokenHash = hashSessionToken(sessionToken);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
 
-  await db.insert(sessions).values({
+  await executor.insert(sessions).values({
     userId,
     sessionTokenHash,
     expiresAt,

@@ -291,8 +291,8 @@ export class AuthService {
         }
       }
 
-      // 5. Create Server-Side Session in database
-      const sessionResult = await createSession(user.id);
+      // 5. Create Server-Side Session in database inside transaction
+      const sessionResult = await createSession(user.id, env.AUTH_SESSION_TTL_SECONDS, tx);
 
       return {
         sessionToken: sessionResult.sessionToken,

@@ -10,7 +10,9 @@ import {
   disputes,
   adminAuditLogs,
 } from '../../db/schema/index';
-import { NotFoundError, ValidationError } from '../errors';
+import { NotFoundError, ValidationError, ConflictError, ForbiddenError } from '../errors';
+import { PaymentService } from './payment.service';
+import { revokeAllUserSessions } from '../auth/session';
 
 export interface MarketplaceMetrics {
   activeRequestsCount: number;
@@ -473,6 +475,11 @@ export class AdminService {
       })
       .where(eq(providers.userId, userId));
 
+    if (isBlocked) {
+      // Immediately revoke all server-side sessions
+      await revokeAllUserSessions(userId);
+    }
+
     if (adminId) {
       await db.insert(adminAuditLogs).values({
         adminId,
@@ -588,7 +595,7 @@ export class AdminService {
   }
 
   /**
-   * Creates a dispute for an order.
+   * Creates a dispute for an order with strict actor authorization.
    */
   static async createDispute(
     orderId: string,
@@ -604,12 +611,46 @@ export class AdminService {
       throw new NotFoundError(`Order with ID '${orderId}' not found`);
     }
 
+    // Verify actor is a participant in this order (or admin)
+    const [provider] = await db
+      .select()
+      .from(providers)
+      .where(eq(providers.id, order.providerId));
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, openedByUserId));
+
+    const isCustomer = order.customerId === openedByUserId;
+    const isProvider = provider?.userId === openedByUserId;
+    const isAdmin = user?.roles.includes('admin');
+
+    if (!isCustomer && !isProvider && !isAdmin) {
+      throw new ForbiddenError('You can only open a dispute for orders you participate in');
+    }
+
+    // Check if an active OPEN dispute already exists for this order
+    const [existingOpenDispute] = await db
+      .select({ id: disputes.id })
+      .from(disputes)
+      .where(
+        and(
+          eq(disputes.orderId, orderId),
+          eq(disputes.status, 'OPEN')
+        )
+      );
+
+    if (existingOpenDispute) {
+      throw new ConflictError('An active dispute is already open for this order');
+    }
+
     const [created] = await db
       .insert(disputes)
       .values({
         orderId,
         openedByUserId,
-        reason,
+        reason: reason.trim(),
         status: 'OPEN',
       })
       .returning({ id: disputes.id });
@@ -652,7 +693,7 @@ export class AdminService {
   }
 
   /**
-   * Resolves a dispute with atomic status updates and audit logging.
+   * Resolves a dispute with atomic status updates, refund triggers, and audit logging.
    */
   static async resolveDispute(
     disputeId: string,
@@ -661,44 +702,80 @@ export class AdminService {
     notes?: string,
     adminId?: string
   ): Promise<DisputeAdminItem> {
-    const [dispute] = await db
-      .select()
-      .from(disputes)
-      .where(eq(disputes.id, disputeId));
+    return await db.transaction(async (tx) => {
+      const [dispute] = await tx
+        .select()
+        .from(disputes)
+        .where(eq(disputes.id, disputeId))
+        .for('update');
 
-    if (!dispute) {
-      throw new NotFoundError(`Dispute with ID '${disputeId}' not found`);
-    }
+      if (!dispute) {
+        throw new NotFoundError(`Dispute with ID '${disputeId}' not found`);
+      }
 
-    const now = new Date();
-    await db
-      .update(disputes)
-      .set({
-        status: resolution,
-        resolutionNotes: notes || null,
-        refundAmountTiyn: refundAmountTiyn ?? null,
-        adminId: adminId || null,
-        resolvedAt: now,
-      })
-      .where(eq(disputes.id, disputeId));
+      if (dispute.status !== 'OPEN') {
+        throw new ConflictError(`Cannot resolve dispute: it is already in status '${dispute.status}'`);
+      }
 
-    if (adminId) {
-      await db.insert(adminAuditLogs).values({
-        adminId,
-        action: 'RESOLVE_DISPUTE',
-        entityType: 'DISPUTE',
-        entityId: disputeId,
-        payload: JSON.stringify({ resolution, refundAmountTiyn, notes }),
-        createdAt: now,
-      });
-    }
+      const now = new Date();
 
-    const all = await this.listDisputes();
-    const updated = all.find((d) => d.id === disputeId);
-    if (!updated) {
-      throw new NotFoundError('Resolved dispute could not be retrieved');
-    }
-    return updated;
+      // If resolution is REFUND, trigger atomic refund on the order
+      if (resolution === 'RESOLVED_REFUND') {
+        await PaymentService.refundHold(dispute.orderId, notes || 'Dispute arbitration refund', tx);
+      }
+
+      await tx
+        .update(disputes)
+        .set({
+          status: resolution,
+          resolutionNotes: notes || null,
+          refundAmountTiyn: refundAmountTiyn ?? null,
+          adminId: adminId || null,
+          resolvedAt: now,
+        })
+        .where(eq(disputes.id, disputeId));
+
+      if (adminId) {
+        await tx.insert(adminAuditLogs).values({
+          adminId,
+          action: 'RESOLVE_DISPUTE',
+          entityType: 'DISPUTE',
+          entityId: disputeId,
+          payload: JSON.stringify({ resolution, refundAmountTiyn, notes }),
+          createdAt: now,
+        });
+      }
+
+      const [updated] = await tx
+        .select({
+          id: disputes.id,
+          orderId: disputes.orderId,
+          openedByUserId: disputes.openedByUserId,
+          openedByPhone: users.phone,
+          reason: disputes.reason,
+          status: disputes.status,
+          resolutionNotes: disputes.resolutionNotes,
+          refundAmountTiyn: disputes.refundAmountTiyn,
+          adminId: disputes.adminId,
+          createdAt: disputes.createdAt,
+          resolvedAt: disputes.resolvedAt,
+          category: serviceRequests.category,
+          providerBusinessName: providers.businessName,
+          orderStatus: orders.status,
+        })
+        .from(disputes)
+        .innerJoin(users, eq(disputes.openedByUserId, users.id))
+        .innerJoin(orders, eq(disputes.orderId, orders.id))
+        .innerJoin(serviceRequests, eq(orders.requestId, serviceRequests.id))
+        .innerJoin(providers, eq(orders.providerId, providers.id))
+        .where(eq(disputes.id, disputeId));
+
+      if (!updated) {
+        throw new NotFoundError('Resolved dispute could not be retrieved');
+      }
+
+      return updated;
+    });
   }
 
   /**

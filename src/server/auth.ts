@@ -6,6 +6,7 @@ import { db } from '../db/client';
 import { users, providers } from '../db/schema/index';
 import { UnauthorizedError, ForbiddenError } from './errors';
 import { getSessionTokenFromRequest, validateSessionToken } from './auth/session';
+import { enforceCsrf } from './auth/csrf';
 
 export interface AuthUser {
   id: string;
@@ -132,6 +133,12 @@ export async function requireAuth(
 
   if (authUser.isBlocked) {
     throw new ForbiddenError('Учетная запись пользователя заблокирована');
+  }
+
+  // Automatically enforce CSRF origin protection on mutation requests for cookie sessions
+  const sessionToken = getSessionTokenFromRequest(req);
+  if (sessionToken && !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase())) {
+    enforceCsrf(req);
   }
 
   if (allowedRoles && allowedRoles.length > 0) {

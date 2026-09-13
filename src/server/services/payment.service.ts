@@ -169,26 +169,7 @@ export class PaymentService {
    */
   static async captureAndSplit(orderId: string, expectedProviderId?: string): Promise<SplitResult> {
     return await db.transaction(async (tx) => {
-      // 1. Lock invoice with FOR UPDATE
-      const [invoice] = await tx
-        .select()
-        .from(paymentInvoices)
-        .where(eq(paymentInvoices.orderId, orderId))
-        .for('update');
-
-      if (!invoice) {
-        throw new NotFoundError(`No invoice found for order '${orderId}'`);
-      }
-
-      if (invoice.status === 'CAPTURED') {
-        throw new ConflictError(`Invoice for order '${orderId}' has already been captured and split`);
-      }
-
-      if (invoice.status === 'REFUNDED') {
-        throw new ConflictError(`Cannot capture refunded invoice for order '${orderId}'`);
-      }
-
-      // 2. Fetch and lock order with FOR UPDATE
+      // 1. Fetch and lock parent order with FOR UPDATE first (consistent hierarchy: orders -> paymentInvoices -> wallets)
       const [order] = await tx
         .select()
         .from(orders)
@@ -205,6 +186,25 @@ export class PaymentService {
 
       if (expectedProviderId && order.providerId !== expectedProviderId) {
         throw new ForbiddenError('You are not the assigned provider for this order');
+      }
+
+      // 2. Lock invoice with FOR UPDATE second
+      const [invoice] = await tx
+        .select()
+        .from(paymentInvoices)
+        .where(eq(paymentInvoices.orderId, orderId))
+        .for('update');
+
+      if (!invoice) {
+        throw new NotFoundError(`No invoice found for order '${orderId}'`);
+      }
+
+      if (invoice.status === 'CAPTURED') {
+        throw new ConflictError(`Invoice for order '${orderId}' has already been captured and split`);
+      }
+
+      if (invoice.status === 'REFUNDED') {
+        throw new ConflictError(`Cannot capture refunded invoice for order '${orderId}'`);
       }
 
       const [provider] = await tx
