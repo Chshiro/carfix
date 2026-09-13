@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { db } from '../src/db/client';
 import { users, wallets, otpChallenges, sessions, providers } from '../src/db/schema/index';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, isNull } from 'drizzle-orm';
 import { normalizeKzPhone, validateKzPhone, maskPhone, formatKzPhone } from '../src/server/auth/phone';
 import { generateSecureOtp, hashOtp, verifyOtpHash } from '../src/server/auth/otp';
 import { getClientIp, hashIp } from '../src/server/auth/client-ip';
@@ -46,6 +46,7 @@ describe('Production Authentication & Security Hardening Test Suite', () => {
 
   beforeEach(async () => {
     memorySms = new TestMemorySmsProvider();
+    await db.update(otpChallenges).set({ consumedAt: new Date() }).where(isNull(otpChallenges.consumedAt));
   });
 
   // =========================================================================

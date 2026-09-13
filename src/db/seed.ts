@@ -16,6 +16,8 @@ import {
   wallets,
   transactions,
   paymentInvoices,
+  sessions,
+  otpChallenges,
 } from './schema/index';
 
 export const SEED_CUSTOMER_ID = 'c0000000-0000-0000-0000-000000000001';
@@ -89,6 +91,8 @@ export async function seedDatabase() {
   await db.delete(providerAvailability);
   await db.delete(providerCapabilities);
   await db.delete(providers);
+  await db.delete(sessions);
+  await db.delete(otpChallenges);
   await db.delete(users);
 
   const now = new Date();

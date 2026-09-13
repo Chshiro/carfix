@@ -86,6 +86,15 @@ export class CustomerService {
       throw new ValidationError('Код подтверждения обязателен');
     }
 
+    // In dev / demo convenience login, ensure an active challenge exists before verifying
+    if (isNonProd) {
+      try {
+        await AuthService.requestOtp(rawPhone, clientIp);
+      } catch {
+        // Lingering challenge or cooldown is safe to proceed to verification
+      }
+    }
+
     return await this.verifyOtp(rawPhone, otpCode, clientIp);
   }
 
