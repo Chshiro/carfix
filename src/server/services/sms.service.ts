@@ -15,9 +15,9 @@ export class MockSmsProvider implements ISmsProvider {
   name = 'mock';
 
   constructor() {
-    if (env.NODE_ENV === 'production') {
+    if (env.NODE_ENV === 'production' && env.DEMO_MODE !== 'true') {
       throw new AppError(
-        'CRITICAL CONFIGURATION ERROR: MockSmsProvider is strictly forbidden in production!',
+        'CRITICAL CONFIGURATION ERROR: MockSmsProvider is strictly forbidden in production without DEMO_MODE!',
         500,
         'INVALID_SMS_CONFIG'
       );
@@ -25,9 +25,9 @@ export class MockSmsProvider implements ISmsProvider {
   }
 
   async sendOtp(phone: string, code: string): Promise<void> {
-    if (env.NODE_ENV === 'production') {
+    if (env.NODE_ENV === 'production' && env.DEMO_MODE !== 'true') {
       throw new AppError(
-        'CRITICAL SECURITY VIOLATION: Cannot use Mock SMS provider in production',
+        'CRITICAL SECURITY VIOLATION: Cannot use Mock SMS provider in production without DEMO_MODE',
         500,
         'SECURITY_VIOLATION'
       );
